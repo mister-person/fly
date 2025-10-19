@@ -1,0 +1,6 @@
+flygym
+Drosophila_brain_model
+libsimd/*
+outputs/*
+results/*
+__pycache__/*

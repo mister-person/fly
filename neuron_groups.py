@@ -32,7 +32,7 @@ muscles = {
     "long_tendon",
 }
 
-leg_neuron_groups = defaultdict(list)
+leg_neuron_groups: dict[str, list[int]] = defaultdict(list)
 
 #TODO cache this
 banc = pd.read_csv("../flywire/banc_neurons.csv")

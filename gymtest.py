@@ -49,7 +49,6 @@ if __name__ == "__main__":
 
     sim, obs, info = setup_fly()
 
-    sim.fly.init_pose
     starting_pose: flygym_state.kinematic_pose.KinematicPose = flygym_preprogrammed.get_preprogrammed_pose("tripod")
     print(starting_pose.joint_pos)
     starting_positions = np.zeros(len(actuated_joints))

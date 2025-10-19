@@ -143,9 +143,9 @@ def start_sim(df_comp, df_con, neurons_to_activate):
 
     leg_neuron_groups = neuron_groups.leg_neuron_groups
 
-    neuron_to_muscle = {}
+    muscle_to_gym_muscle = {}
 
-    muscle_to_gym_name = {
+    muscle_type_to_gym_type = {
         "trochanter_flexor": ("Femur", 1),
         "trochanter_extensor": ("Femur", -1),
         "tibia_flexor": ("Tibia", 1),
@@ -173,10 +173,12 @@ def start_sim(df_comp, df_con, neurons_to_activate):
             print(neuron, side, leg)
             exit()
 
-        for muscle in muscle_to_gym_name.keys():
+        for muscle in muscle_type_to_gym_type.keys():
             if muscle in neuron: # example: joint_LHFemu
-                gym_name, sign = muscle_to_gym_name[muscle]
-                neuron_to_muscle[neuron] = ("joint_" + side + leg + gym_name, sign)
+                gym_name, sign = muscle_type_to_gym_type[muscle]
+                muscle_to_gym_muscle[neuron] = ("joint_" + side + leg + gym_name, sign)
+
+    print(muscle_to_gym_muscle)
 
     @network_operation() # type: ignore 
     def fast_update(time):
@@ -187,6 +189,13 @@ def start_sim(df_comp, df_con, neurons_to_activate):
         for spike_index in spikes:
             spikes_processed += 1
             spike = i2flyid[spike_index]
+
+            for group, group_neurons in leg_neuron_groups.items():
+                if spike in group_neurons:
+                    joint, sign = muscle_to_gym_muscle[group]
+                    joint_state[joints[joint]] += sign
+                    print("spiked!", group, joint)
+            """
             if spike in neurons:
                 if spike in neuron_groups.rf_trochanter_flexor:
                     joint_state[joints["joint_RFFemur"]] += 1
@@ -207,6 +216,7 @@ def start_sim(df_comp, df_con, neurons_to_activate):
                     joint_state[joints["joint_RFTarsus1"]] -= 1
                     print("rf tarsus -")
                 print(joint_state[joints["joint_RFFemur"]])
+            """
 
         action = {"joints": joint_state}
         joint_state[:] = (starting_positions * .05 + joint_state * .95)

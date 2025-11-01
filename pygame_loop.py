@@ -1,4 +1,5 @@
 from collections import defaultdict
+import functools
 from queue import Empty, Queue
 from sys import argv
 import time
@@ -9,11 +10,12 @@ import pandas as pd
 import random
 from scipy.fft import fft
 import neuron_groups
-from realtime import get_synapse_map
+from neuron_model import get_synapse_map
 import test
+from functools import partial
 
-def start_pygame(spike_queue: Queue, input_queue: Queue, frame_queue: Queue, banc: bool, neurons_to_activate):
-    input_queue.put(("pause", True))
+def start_pygame(spike_queue: Queue, control_queue: Queue, frame_queue: Queue, dataset: str, neurons_to_activate):
+    control_queue.put(("pause", True))
     print("start pygame thread")
 
     WIDTH, HEIGHT = (1500, 1200)
@@ -21,21 +23,27 @@ def start_pygame(spike_queue: Queue, input_queue: Queue, frame_queue: Queue, ban
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
 
-    if banc:
+    if dataset == "banc":
         neuron_coords_path = "../flywire/banc_coordinates.csv"
         synapse_coords_filename = "../flywire/banc_connections_princeton.csv"
         SYNAPSES_FILENAME = "./banc_connectivity.parquet"
-    else:
+    elif dataset == "fafb":
         neuron_coords_path = "../flywire/fafb_coordinates.csv"
         synapse_coords_filename = "../flywire/fafb_v783_princeton_synapse_table.csv"
         SYNAPSES_FILENAME = "./2023_03_23_connectivity_630_final.parquet"
+    elif dataset == "mbanc":
+        # neuron_coords_path = "../flywire/fafb_coordinates.csv"
+        # synapse_coords_filename = "../flywire/fafb_v783_princeton_synapse_table.csv"
+        # SYNAPSES_FILENAME = "./2023_03_23_connectivity_630_final.parquet"
+        pass
+        
 
-    _, synapse_map, _ = get_synapse_map("banc" if banc else "fafb")
+    _, synapse_map, _ = get_synapse_map(dataset)
 
     spike_drawer = drawutils.SpikeDrawer(WIDTH, HEIGHT)
     spike_drawer.time_size = 1
     spike_drawer.unit_height = 2
-    neuron_drawer = drawutils.NeuronDrawer(neuron_coords_path, WIDTH, HEIGHT)
+    # neuron_drawer = drawutils.NeuronDrawer(neuron_coords_path, WIDTH, HEIGHT)
     for n in neurons_to_activate:
         spike_drawer.neurons.append(n)
         spike_drawer.color_map[n] = (255, 255, 0)
@@ -94,21 +102,28 @@ def start_pygame(spike_queue: Queue, input_queue: Queue, frame_queue: Queue, ban
         else:
             spike_drawer.color_map[n] = (200, 100, 200)
 
-    right_front_leg_motor = neuron_groups.rf_leg_motor_neurons
+    right_front_leg_motor = neuron_groups.mbanc_rf_leg_neurons
     for i, n in enumerate(right_front_leg_motor):
         spike_drawer.neurons.append(n)
         if i % 2 == 0:
             spike_drawer.color_map[n] = (150, 255, 100)
         else:
             spike_drawer.color_map[n] = (100, 200, 80)
-    left_front_leg_motor = neuron_groups.lf_leg_motor_neurons
+    left_front_leg_motor = neuron_groups.mbanc_lf_leg_neurons
     for i, n in enumerate(left_front_leg_motor):
         spike_drawer.neurons.append(n)
         if i % 2 == 0:
             spike_drawer.color_map[n] = (100, 255, 150)
         else:
             spike_drawer.color_map[n] = (80, 200, 100)
-
+    all_leg_motor = neuron_groups.mbanc_leg_neurons
+    for i, n in enumerate(all_leg_motor):
+        if n not in spike_drawer.neurons:
+            spike_drawer.neurons.append(n)
+            if i % 2 == 0:
+                spike_drawer.color_map[n] = (150, 255, 150)
+            else:
+                spike_drawer.color_map[n] = (100, 200, 100)
 
     #for r in red_neurons:
     for t in target_neurons:
@@ -116,7 +131,7 @@ def start_pygame(spike_queue: Queue, input_queue: Queue, frame_queue: Queue, ban
 
     running = True
     paused = False
-    font = pygame.font.Font(size=50)
+    font = pygame.font.Font(size=30)
     synapse_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     neuron_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     screen.fill("black")
@@ -128,12 +143,14 @@ def start_pygame(spike_queue: Queue, input_queue: Queue, frame_queue: Queue, ban
     last_time = current_time
     time_step = 1/60
 
+    mjc_time = 0
+
     start_time = time.monotonic()
     print("start pygame loop")
 
     def make_callback(queuename):
         def callback(value: float):
-            input_queue.put((queuename, value))
+            control_queue.put((queuename, value))
         return callback
     test_slider = drawutils.Slider((200, 0), name="rate1", on_changed=make_callback("rate1"), initial_value=100)
 
@@ -142,7 +159,7 @@ def start_pygame(spike_queue: Queue, input_queue: Queue, frame_queue: Queue, ban
 
     ui_elements = [test_slider]
 
-    input_queue.put(("pause", False))
+    control_queue.put(("pause", False))
     while running:
         # poll for events
         # pygame.QUIT event means the user clicked X to close your window
@@ -151,10 +168,10 @@ def start_pygame(spike_queue: Queue, input_queue: Queue, frame_queue: Queue, ban
                 running = False
             if event.type == pygame.KEYDOWN:
                 if event.dict["key"] == pygame.K_1:
-                    input_queue.put(("group1", True))
+                    control_queue.put(("group1", True))
                 if event.dict["key"] == pygame.K_SPACE:
                     paused = not paused
-                    input_queue.put(("pause", paused))
+                    control_queue.put(("pause", paused))
                 if event.dict["key"] == pygame.K_MINUS:
                     spike_drawer.time_size /= 2
                     spike_drawer.reset_surfaces()
@@ -170,7 +187,7 @@ def start_pygame(spike_queue: Queue, input_queue: Queue, frame_queue: Queue, ban
             if event.type == pygame.KEYUP:
                 if event.dict["key"] == pygame.K_1:
                     if pygame.key.get_mods() & pygame.KMOD_LSHIFT == 0:
-                        input_queue.put(("group1", False))
+                        control_queue.put(("group1", False))
                     else:
                         print("WAS SHIFTING")
             if event.type == pygame.MOUSEBUTTONDOWN:
@@ -187,25 +204,38 @@ def start_pygame(spike_queue: Queue, input_queue: Queue, frame_queue: Queue, ban
                     slider.drag(event.dict["rel"])
 
         try:
-            current_time, new_spikes = spike_queue.get_nowait()
-            spike_drawer.add_points(new_spikes)
-            fft_drawer.add_points(new_spikes)
+            while True:
+                queue_get = spike_queue.get_nowait()
+                if queue_get is None:
+                    print("fucking reset")
+                    spike_drawer.data.clear()
+                    spike_drawer.reset_surfaces()
+                    continue
+                current_time, new_spikes = queue_get
+                spike_drawer.add_points(new_spikes)
+                fft_drawer.add_points(new_spikes)
         except Empty:
             pass
+        queue_len = spike_queue.qsize()
+        if queue_len > 1:
+            print("RUNNING BEHIND BY", queue_len, "FRAMES")
 
+        frame = None
         try:
-            while frame_bytes := frame_queue.get_nowait():
-                width, height, frame_bytes = frame_queue.get()
+            while frame := frame_queue.get_nowait():
+                pass
+        except Empty:
+            if frame is not None:
+                width, height, frame_bytes, mjc_time = frame
 
                 image = pygame.image.frombytes(frame_bytes, (width, height), "RGB")
                 frame_surface.blit(image)
-        except Empty:
-            pass
 
         screen.fill((0, 0, 0))
         screen.blit(font.render(f"{clock.get_fps():.1f} fps", True, "blue"))
-        screen.blit(font.render(f"sim time: {current_time:.2f}", True, "blue"), (0, 25))
-        screen.blit(font.render(f"real time: {time.monotonic() - start_time:.2f}", True, "blue"), (0, 50))
+        screen.blit(font.render(f"brian time: {current_time:.5f}", True, "blue"), (0, 20))
+        screen.blit(font.render(f"mjc time: {mjc_time:.5f}", True, "blue"), (0, 40))
+        screen.blit(font.render(f"real time: {time.monotonic() - start_time:.2f}", True, "blue"), (0, 60))
         # screen.blit(neuron_surface)
         screen.blit(synapse_surface)
         synapse_surface.fill((0, 0, 0, 0))
@@ -226,4 +256,6 @@ def start_pygame(spike_queue: Queue, input_queue: Queue, frame_queue: Queue, ban
             # last_time = time
             # time += time_step
         
-
+def start_pygame_profile(spike_queue: Queue, input_queue: Queue, frame_queue: Queue, banc: bool, neurons_to_activate):
+    import cProfile
+    cProfile.runctx("start_pygame(spike_queue, input_queue, frame_queue, banc, neurons_to_activate)", globals=globals(), locals=locals(), filename="pygame_loop.prof")

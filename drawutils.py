@@ -6,12 +6,13 @@ import pandas as pd
 import numpy as np
 import pygame
 import random
-import pyopencl
-import pyopencl.array as pyopencl_array
-from pyvkfft.fft import fftn
-import pyvkfft
+# import pyopencl
+# import pyopencl.array as pyopencl_array
+# from pyvkfft.fft import fftn
+# import pyvkfft
 import os
 
+'''
 if 'PYOPENCL_CTX' in os.environ:
     ctx = pyopencl.create_some_context()
 else:
@@ -29,6 +30,7 @@ else:
     if ctx == None:
         exit()
 cq = pyopencl.CommandQueue(ctx)
+'''
 
 class NeuronDrawer():
     def __init__(self, neuron_coords_path, width: int, height: int):
@@ -225,6 +227,10 @@ class Slider:
             self.mouse_down = True
         elif not down:
             self.mouse_down = False
+
+class FFT():
+    def __init__(self):
+        pass
 
 class FFTDrawer():
     def __init__(self, width, height):

@@ -1,0 +1,12 @@
+pip install -e ./flygym
+pip install -e ./Drosophila_brain_model
+
+# install ocl-icd
+
+mujoco errors: https://docs.pytorch.org/rl/stable/reference/generated/knowledge_base/MUJOCO_INSTALLATION.html
+
+can't make egl window -> restart computer
+
+note: downgrade cython to 3.0.9
+
+scipy==1.14.1

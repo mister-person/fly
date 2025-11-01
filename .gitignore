@@ -4,3 +4,4 @@ libsimd/*
 outputs/*
 results/*
 __pycache__/*
+prof/*

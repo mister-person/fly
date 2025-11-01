@@ -1,4 +1,5 @@
 from multiprocessing import Queue
+from queue import Empty
 from threading import Condition
 
 def pygame_thread(frame_queue: Queue, frame_ready: Condition, event_queue: Queue, size: tuple[int, int]):
@@ -8,6 +9,8 @@ def pygame_thread(frame_queue: Queue, frame_ready: Condition, event_queue: Queue
     pygame.init()
     screen = pygame.display.set_mode((1280, 720))
     clock = pygame.time.Clock()
+
+    font = pygame.font.Font(size=50)
 
     screen.fill("purple")
     pygame.draw.circle(screen, "green", pygame.mouse.get_pos(), 40)
@@ -36,11 +39,13 @@ def pygame_thread(frame_queue: Queue, frame_ready: Condition, event_queue: Queue
         queue_len = frame_queue.qsize()
         if queue_len > 0:
             print("RUNNING BEHIND BY", queue_len, "FRAMES")
-        frame = frame_queue.get()
+        time, frame = frame_queue.get()
         pygame.draw.circle(screen, "blue", (600, 500), 40)
 
         image = pygame.image.frombytes(frame, (FRAME_WIDTH, FRAME_HEIGHT), "RGB")
         screen.blit(image, (0, 0))
+
+        screen.blit(font.render(f"physics sim time: {time}", True, "black"), (0, 35))
 
         # flip() the display to put your work on screen
         pygame.display.flip()

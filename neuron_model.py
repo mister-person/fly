@@ -9,39 +9,15 @@ import brian2
 import numpy as np
 import pandas as pd
 import Drosophila_brain_model.model as model
+import data
 from profile_dec import profile
 
-cache = {}
-def get_synapse_map(dataset):
-    if dataset in cache:
-        return cache[dataset]
-    if dataset == "banc":
-        SYNAPSES_FILENAME = "./data/banc_connectivity.parquet"
-    elif dataset == "fafb":
-        SYNAPSES_FILENAME = "./Drosophila_brain_model/Connectivity_783.parquet"
-    elif dataset == "mbanc":
-        SYNAPSES_FILENAME = "./data/mbanc_connectivity.parquet"
-    else:
-        raise Exception(f"unknown dataset {dataset}")
-
-    synapses_df = pd.read_parquet(SYNAPSES_FILENAME)
-    synapses = synapses_df.to_numpy()
-    synapse_map = defaultdict(list)
-    reverse_synapse_map = defaultdict(list)
-    for synapse in synapses[1:]:
-        synapse_map[synapse[0]].append((synapse[1], synapse[6]))
-        reverse_synapse_map[synapse[1]].append((synapse[0], synapse[6]))
-
-    cache[dataset] = synapses, synapse_map, reverse_synapse_map
-    return synapses, synapse_map, reverse_synapse_map
-
-def start_neuron_sim(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue: queue.Queue, learned_params, runtime=100_000 * ms):
-    start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue, learned_params, runtime)
+def start_neuron_sim(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue: queue.Queue, runtime=100_000 * ms):
+    start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue, runtime)
 
 @profile
-def start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue: queue.Queue, learned_params, runtime=100_000 * ms):
+def start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue: queue.Queue, runtime=100_000 * ms):
     print("started neuron sim")
-    banc = dataset == "banc"
     # load name/id mappings
     flyid2i = {j: i for i, j in enumerate(df_comp.index)}  # flywire id: brian ID
     i2flyid = {j: i for i, j in flyid2i.items()} # brian ID: flywire ID
@@ -55,7 +31,7 @@ def start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_q
     tau = 5 * ms                 # time constant 
 
     # params = model.default_params
-    synapse_weight = .09 * mV
+    synapse_weight = .1 * mV
     poisson_rate = 250 * Hz
     model_eqs = ''' 
     dv/dt = (v_0 - v + g) / t_mbr : volt (unless refractory)
@@ -83,20 +59,15 @@ def start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_q
         name = 'default_neurons',
         # namespace = params,
     )
-    neu.v = v_0
-    neu.g = 0
-    neu.rfc = refractory_period
 
     syn = Synapses(neu, neu, 'w : volt', on_pre='g += w', delay=t_dly, name='default_synapses')
     i_pre = df_con.loc[:, 'Presynaptic_Index'].values
     i_post = df_con.loc[:, 'Postsynaptic_Index'].values
     syn.connect(i=i_pre, j=i_post)
-    weight_mods = 1 if "weight_mods" not in learned_params else learned_params["weight_mods"]
-    syn.w = df_con.loc[:,'Excitatory x Connectivity'].values * weight_mods * synapse_weight
 
     spk_mon = SpikeMonitor(neu) 
 
-    _, synapse_map, reverse_synapse_map = get_synapse_map(dataset)
+    _, synapse_map, reverse_synapse_map = data.get_synapse_map(dataset)
 
     neurons_indexes = [flyid2i[flyid] for flyid in neurons_to_activate]
 
@@ -179,6 +150,8 @@ def start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_q
         while True:
             try:
                 while event := control_queue.get_nowait():
+                    if event[0] == "start":
+                        print("how the fuck")
                     if event[0] == "group1":
                         if event[1]:
                             if control_states[0].state == STATE_POI:
@@ -215,7 +188,27 @@ def start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_q
 
     net = Network(neu, syn, spk_mon, *poi_inp, update, fast_update)
 
-    # run simulation
-    net.run(duration=runtime)
+    while True:
+        while True:
+            event = control_queue.get()
+            if event[0] == "start":
+                learned_params = event[1]
+                syn_weight_mods = 1 if "syn_weight_mods" not in learned_params else learned_params["syn_weight_mods"]
 
-    spike_queue.put(None)
+                if "neu_weight_mods" in learned_params:
+                    neu_weight_mods = learned_params["neu_weight_mods"]
+                    neu_weights_by_syn = neu_weight_mods[df_con.loc[:,'Presynaptic_Index']]
+                else:
+                    neu_weights_by_syn = 1
+
+                syn.w = df_con.loc[:,'Excitatory x Connectivity'].values * syn_weight_mods * synapse_weight * neu_weights_by_syn
+                print(syn.w)
+                neu.v = v_0
+                neu.g = 0
+                neu.rfc = refractory_period
+                break
+
+        # run simulation
+        net.run(duration=runtime)
+
+        spike_queue.put(None)

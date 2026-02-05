@@ -10,7 +10,7 @@ import pandas as pd
 import random
 from scipy.fft import fft
 import neuron_groups
-from neuron_model import get_synapse_map
+import data
 import test
 from functools import partial
 
@@ -38,7 +38,7 @@ def start_pygame(spike_queue: Queue, control_queue: Queue, frame_queue: Queue, d
         pass
         
 
-    _, synapse_map, _ = get_synapse_map(dataset)
+    _, synapse_map, _ = data.get_synapse_map(dataset)
 
     spike_drawer = drawutils.SpikeDrawer(WIDTH, HEIGHT)
     spike_drawer.time_size = 1
@@ -216,9 +216,9 @@ def start_pygame(spike_queue: Queue, control_queue: Queue, frame_queue: Queue, d
                 fft_drawer.add_points(new_spikes)
         except Empty:
             pass
-        queue_len = spike_queue.qsize()
-        if queue_len > 1:
-            print("RUNNING BEHIND BY", queue_len, "FRAMES")
+        # queue_len = spike_queue.qsize()
+        # if queue_len > 1:
+            # print("RUNNING BEHIND BY", queue_len, "FRAMES")
 
         frame = None
         try:

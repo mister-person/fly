@@ -8,6 +8,7 @@ from time import sleep
 from brian2 import Hz, Mvolt, Network, NeuronGroup, PoissonInput, Quantity, SpikeGeneratorGroup, SpikeMonitor, Synapses, mV, ms, network_operation, second, volt
 import brian2
 from brian2.core.variables import VariableView
+import data
 from drawutils import SpikeDrawer
 import sys
 import os
@@ -55,9 +56,11 @@ def start_sim(df_comp, df_con, neurons_to_activate):
 
     spike_queue = Queue()
     input_queue = Queue()
-    learned_params = {"weight_mods": np.random.normal(1, 1, len(df_con))}
-    neuron_thread = threading.Thread(target=neuron_model.start_neuron_sim, args=(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue, learned_params))
+    learned_params = {"syn_weight_mods": np.random.normal(1, 1, len(df_con))}
+    neuron_thread = threading.Thread(target=neuron_model.start_neuron_sim, args=(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue))
     neuron_thread.start()
+
+    control_queue.put(("start", learned_params))
 
     spikes_acc = []
     times_acc = []
@@ -88,7 +91,7 @@ def start_sim(df_comp, df_con, neurons_to_activate):
             last_time = now
 
 if __name__ == "__main__":
-    dataset = "mbanc"
+    dataset = "mbanc-no-optic"
 
     if dataset == "fafb":
         config = {
@@ -120,8 +123,9 @@ if __name__ == "__main__":
     path_comp = config["path_comp"]
     path_con = config["path_con"]
 
-    df_comp = pd.read_csv(path_comp, index_col=0)
-    df_con = pd.read_parquet(path_con)
+    # df_comp = pd.read_csv(path_comp, index_col=0)
+    # df_con = pd.read_parquet(path_con)
+    df_comp, df_con = data.load(dataset)
 
     """
     filter_neurons = []

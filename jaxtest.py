@@ -25,7 +25,7 @@ jnp_con = jnp.array(df_con.to_numpy()[..., [2, 3]])
 jnp_strengths = jnp.array(df_con.to_numpy()[..., 6], dtype=jnp.float32)
 print(jnp_strengths)
 
-def forward(jnp_con, jnp_strengths, neurons_to_activate):
+def forward(jnp_con, jnp_strengths, weights, neurons_to_activate):
     connection_strength = .003
 
     all_neurons = jnp.zeros(211470)
@@ -36,8 +36,8 @@ def forward(jnp_con, jnp_strengths, neurons_to_activate):
     jprint(jnp_strengths.shape)
 
     jprint(jax.numpy.sum(all_neurons_orig))
-    for _ in range(10):
-        step1 = (all_neurons[jnp_con[..., 0]] * jnp_strengths * connection_strength).clip(max=1)
+    for _ in range(5):
+        step1 = (all_neurons[jnp_con[..., 0]] * jnp_strengths * weights * connection_strength).clip(max=1)
         all_neurons = all_neurons.at[jnp_con[..., 1]].add(step1)
 
         jprint(step1.shape)
@@ -48,17 +48,21 @@ def forward(jnp_con, jnp_strengths, neurons_to_activate):
     return all_neurons
 
 @jax.jit
-def loss(jnp_con, jnp_strengths, neurons_to_activate, neurons_to_push):
-    all_neurons = forward(jnp_con, jnp_strengths, neurons_to_activate)
+def loss(jnp_con, jnp_strengths, weights, neurons_to_activate, neurons_to_push):
+    all_neurons = forward(jnp_con, jnp_strengths, weights, neurons_to_activate)
 
     return sum(all_neurons[neurons_to_push])
 
-print(jax.make_jaxpr(forward)(jnp_con, jnp_strengths, neurons_to_activate))
+weights = jnp.full_like(jnp_strengths, 1.0)
 
-all_neurons = forward(jnp_con, jnp_strengths, neurons_to_activate)
+print(jax.make_jaxpr(forward)(jnp_con, jnp_strengths, weights, neurons_to_activate))
+
+all_neurons = forward(jnp_con, jnp_strengths, weights, neurons_to_activate)
 
 print(all_neurons[neurons_to_push[0].item()])
 
-asdf = jax.grad(loss, argnums=1)(jnp_con, jnp_strengths, neurons_to_activate, neurons_to_push)
+asdf = jax.grad(loss, argnums=1)(jnp_con, jnp_strengths, weights, neurons_to_activate, neurons_to_push)
+asdf2 = jax.grad(loss, argnums=2)(jnp_con, jnp_strengths, weights, neurons_to_activate, neurons_to_push)
 
-print(asdf.sort())
+print("w/o weights", asdf.sort())
+print("with weights", asdf2.sort())

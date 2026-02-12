@@ -42,7 +42,7 @@ def start_sim(df_comp, df_con, neurons_to_activate):
     pygame_spike_queue = mp_context.Queue()
     control_queue = mp_context.Queue()
     frame_queue = mp_context.Queue()
-    frame_queue.put((700, 700, np.empty(shape=(700*700*3,), dtype=np.int8).tobytes(), 0))
+    # frame_queue.put((700, 700, np.empty(shape=(700*700*3,), dtype=np.int8).tobytes(), 0))
     target_func = pygame_loop.start_pygame
     render_process = mp_context.Process(target=target_func, args=[pygame_spike_queue, control_queue, frame_queue, dataset, neurons_to_activate])
     render_process.start()

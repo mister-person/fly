@@ -125,6 +125,8 @@ def start_pygame(spike_queue: Queue, control_queue: Queue, frame_queue: Queue, d
             else:
                 spike_drawer.color_map[n] = (100, 200, 100)
 
+    spike_drawer.color_map[neuron_groups.mbanc_leg_neuron_groups["rf_trochanter_extensor"][0]] = (180, 180, 180)
+
     #for r in red_neurons:
     for t in target_neurons:
         print(t, "", synapse_map[t])

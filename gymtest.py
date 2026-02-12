@@ -43,7 +43,7 @@ def setup_fly():
     return sim, obs, info
     
 
-def start_mjc_thread(dataset, mjc_spikes_queue, frame_queue: queue.Queue | None, obs_queue):
+def start_mjc_thread(dataset, mjc_spikes_queue, frame_queue: queue.Queue | None, obs_queue: queue.Queue):
     leg_neuron_groups = {}
     if dataset == "banc":
         leg_neuron_groups = neuron_groups.banc_leg_neuron_groups
@@ -125,6 +125,8 @@ def start_mjc_thread(dataset, mjc_spikes_queue, frame_queue: queue.Queue | None,
         joint_state[:] = (starting_positions * .001 + joint_state * .999)
         obs, reward, terminated, truncated, info = sim.step(action)
         obs_queue.put(obs) #this is nothing for now
+
+        print('in sim')
 
         if frame_queue is not None:
             frame = sim.render()[0]

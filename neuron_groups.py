@@ -118,6 +118,19 @@ def load_mbanc_leg_neuron_groups(filename: str, use_cache = True):
 banc_leg_neuron_groups = load_banc_leg_neuron_groups("data/banc_leg_neuron_groups.pickle")
 mbanc_leg_neuron_groups = load_mbanc_leg_neuron_groups("data/mbanc_leg_neuron_groups.pickle")
 
+legs = ["lf", "rm", "lh", "rf", "lm", "rh"]
+mbanc_legs = defaultdict(list)
+for key in mbanc_leg_neuron_groups.keys():
+    neurons = mbanc_leg_neuron_groups[key]
+    for leg in legs:
+        if key.startswith(leg):
+            for neuron in neurons:
+                mbanc_legs[leg].append((key, neuron))
+            break
+    else:
+        print("extra key", key)
+    # dark_color.extend([(key, neuron) for neuron in neuron_groups.mbanc_leg_neuron_groups[key]])
+
 mbanc_rf_leg_neurons = (mbanc_leg_neuron_groups["rf_trochanter_flexor"] + 
     mbanc_leg_neuron_groups["rf_trochanter_extensor"] + 
     mbanc_leg_neuron_groups["rf_tibia_extensor"] + 

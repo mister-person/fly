@@ -2,6 +2,8 @@ import multiprocessing
 import queue
 import sys
 import os
+import threading
+import typing
 import flygym
 import flygym.state as flygym_state
 import flygym.preprogrammed as flygym_preprogrammed
@@ -28,8 +30,8 @@ def setup_fly():
         )
     cam = flygym.ZStabilizedCamera(
         attachment_point=fly.model.worldbody, camera_name="camera_left",
-        targeted_fly_names=fly.name,
-        play_speed=0.3,
+        targeted_fly_names=[fly.name],
+        play_speed=.2,
         window_size=(1280, 720),
     )
     sim = flygym.SingleFlySimulation(
@@ -42,105 +44,133 @@ def setup_fly():
     obs, info = sim.reset()
     return sim, obs, info
     
+class MjcSim:
+    def __init__(self, dataset_name):
+        self.dataset_name = dataset_name
+        self.mjc_spikes_queue = queue.Queue()
+        self.obs_queue = queue.Queue()
+        self.frame_queue: typing.Any = queue.Queue()
+        self.control_queue = queue.Queue()
 
-def start_mjc_thread(dataset, mjc_spikes_queue, frame_queue: queue.Queue | None, obs_queue: queue.Queue):
-    leg_neuron_groups = {}
-    if dataset == "banc":
-        leg_neuron_groups = neuron_groups.banc_leg_neuron_groups
-    if dataset == "mbanc":
-        leg_neuron_groups = neuron_groups.mbanc_leg_neuron_groups
-    muscle_to_gym_muscle = {}
+        self._start()
 
-    muscle_type_to_gym_type = {
-        "trochanter_flexor": ("Femur", -1),
-        "trochanter_extensor": ("Femur", +1),
-        "tibia_flexor": ("Tibia", 2),
-        "tibia_extensor": ("Tibia", -2),
-        "tarsus_depressor": ("Tarsus1", 4),
-        "tarsus_levetator": ("Tarsus1", -4),
-        "long_tendon": (None, 1),
-    }
+    def _start(self):
+        self.mjc_thread = threading.Thread(target=self.start_mjc_thread_, args=())
+        self.mjc_thread.start()
+    
+    def put_spikes(self, spikes):
+        self.mjc_spikes_queue.put(spikes, False)
 
-    for neuron in leg_neuron_groups.keys():
-        side = leg = None
-        if neuron[0] == 'r':
-            side = "R"
-        if neuron[0] == 'l':
-            side = "L"
-        if neuron[1] == 'f':
-            leg = 'F'
-        if neuron[1] == 'm':
-            leg = 'M'
-        if neuron[1] == 'h':
-            leg = 'H'
+    def reset(self):
+        self.control_queue.put("stop")
+        self.mjc_spikes_queue.put([])
+        self.mjc_thread.join()
+        self._start()
 
-        if side is None or leg is None:
-            print("error building map thing")
-            print(neuron, side, leg)
-            exit()
+    def start_mjc_thread_(self):
+        leg_neuron_groups = {}
+        if self.dataset_name == "banc":
+            leg_neuron_groups = neuron_groups.banc_leg_neuron_groups
+        if self.dataset_name == "mbanc":
+            leg_neuron_groups = neuron_groups.mbanc_leg_neuron_groups
+        muscle_to_gym_muscle = {}
 
-        for muscle in muscle_type_to_gym_type.keys():
-            if muscle in neuron: # example: joint_LHFemu
-                gym_name, sign = muscle_type_to_gym_type[muscle]
-                if gym_name != None:
-                    muscle_to_gym_muscle[neuron] = ("joint_" + side + leg + gym_name, sign)
+        muscle_type_to_gym_type = {
+            "trochanter_flexor": ("Femur", -1),
+            "trochanter_extensor": ("Femur", +1),
+            "tibia_flexor": ("Tibia", 2),
+            "tibia_extensor": ("Tibia", -2),
+            "tarsus_depressor": ("Tarsus1", 4),
+            "tarsus_levetator": ("Tarsus1", -4),
+            "long_tendon": (None, 1),
+        }
 
-    print(muscle_to_gym_muscle)
+        for neuron in leg_neuron_groups.keys():
+            side = leg = None
+            if neuron[0] == 'r':
+                side = "R"
+            if neuron[0] == 'l':
+                side = "L"
+            if neuron[1] == 'f':
+                leg = 'F'
+            if neuron[1] == 'm':
+                leg = 'M'
+            if neuron[1] == 'h':
+                leg = 'H'
 
-    sim, obs, info = setup_fly()
-    obs_queue.put(obs) #this is nothing for now
-    print("asdf 1")
-    # with sim.physics.suppress_physics_errors() as thing:
-        # print(thing)
-        # print(type(thing))
-    print("asdf 2")
-    actuated_joints = flygym_preprogrammed.all_leg_dofs
-    starting_pose: flygym_state.kinematic_pose.KinematicPose = flygym_preprogrammed.get_preprogrammed_pose("tripod")
-    print(starting_pose.joint_pos)
-    starting_positions = np.zeros(len(actuated_joints))
-    joints = {}
-    for i, joint in enumerate(actuated_joints):
-        starting_positions[i] = starting_pose[joint]
-        joints[joint] = i
+            if side is None or leg is None:
+                print("error building map thing")
+                print(neuron, side, leg)
+                exit()
 
-    action_size = len(flygym.preprogrammed.all_leg_dofs) # type: ignore
+            for muscle in muscle_type_to_gym_type.keys():
+                if muscle in neuron: # example: joint_LHFemu
+                    gym_name, sign = muscle_type_to_gym_type[muscle]
+                    if gym_name != None:
+                        muscle_to_gym_muscle[neuron] = ("joint_" + side + leg + gym_name, sign)
 
-    joint_state = starting_positions.copy()
+        # print(muscle_to_gym_muscle)
 
-    step_num = 0
-    steps_per_second = 10_000
-    while True:
-        spikes = mjc_spikes_queue.get()
-        for spike in spikes:
-            # spikes_processed += 1
+        sim, obs, info = setup_fly()
+        self.obs_queue.put(obs) #this is nothing for now
+        # print("asdf 1")
+        # with sim.physics.suppress_physics_errors() as thing:
 
-            for group, group_neurons in leg_neuron_groups.items():
-                if spike in group_neurons and group in muscle_to_gym_muscle:
-                    joint, sign = muscle_to_gym_muscle[group]
-                    joint_state[joints[joint]] += sign * .1
-                    print("spiked!", group, joint)
-            # print("spiked", spike)
+            # print(thing)
+            # print(type(thing))
+        # print("asdf 2")
+        actuated_joints = flygym_preprogrammed.all_leg_dofs
+        starting_pose: flygym_state.kinematic_pose.KinematicPose = flygym_preprogrammed.get_preprogrammed_pose("tripod")
+        starting_positions = np.zeros(len(actuated_joints))
+        joints = {}
+        for i, joint in enumerate(actuated_joints):
+            starting_positions[i] = starting_pose[joint]
+            joints[joint] = i
 
-        action = {"joints": joint_state}
-        joint_state[:] = (starting_positions * .001 + joint_state * .999)
-        obs, reward, terminated, truncated, info = sim.step(action)
-        obs_queue.put(obs) #this is nothing for now
+        action_size = len(flygym.preprogrammed.all_leg_dofs) # type: ignore
 
-        print('in sim')
+        joint_state = starting_positions.copy()
 
-        if frame_queue is not None:
-            frame = sim.render()[0]
-            if frame is not None:
+        step_num = 0
+        steps_per_second = 10_000
+        while True:
+            if self.control_queue.qsize() > 0:
                 try:
-                    frame_queue.get_nowait()
+                    control = self.control_queue.get_nowait()
+                    if control == "stop":
+                        print("mjc stopping")
+                        break
                 except queue.Empty:
                     pass
-                frame_queue.put((frame.shape[1], frame.shape[0], frame.tobytes(), step_num / steps_per_second))
-                # frame_queue.width = frame.shape[1]
-                # frame_queue.height = frame.shape[0]
-                # frame_queue.data = frame.tobytes()
+            spikes = self.mjc_spikes_queue.get()
+            for spike in spikes:
+                # spikes_processed += 1
 
-        step_num += 1
+                for group, group_neurons in leg_neuron_groups.items():
+                    if spike in group_neurons and group in muscle_to_gym_muscle:
+                        joint, sign = muscle_to_gym_muscle[group]
+                        joint_state[joints[joint]] += sign * .05
+                        # print("spiked!", group, joint)
+
+            action = {"joints": joint_state}
+            joint_state[:] = (starting_positions * .001 + joint_state * .999)
+            obs, reward, terminated, truncated, info = sim.step(action)
+            self.obs_queue.put(obs) #this is nothing for now
+
+            if step_num % 10 == 0:
+                if self.frame_queue is not None:
+                    frame = sim.render()[0]
+                    if frame is not None:
+                        try:
+                            self.frame_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+                        self.frame_queue.put((frame.shape[1], frame.shape[0], frame.tobytes(), step_num / steps_per_second))
+                        # self.frame_queue.width = frame.shape[1]
+                        # self.frame_queue.height = frame.shape[0]
+                        # self.frame_queue.data = frame.tobytes()
+
+            step_num += 1
 
 
 if __name__ == "__main__":

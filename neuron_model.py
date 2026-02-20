@@ -1,8 +1,10 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from queue import Empty
+from queue import Empty, Queue
 import queue
+import sys
 from threading import Condition
+import threading
 from time import sleep
 from brian2 import Hz, Network, NeuronGroup, PoissonInput, SpikeMonitor, Synapses, mV, ms, network_operation
 import brian2
@@ -11,6 +13,22 @@ import pandas as pd
 import Drosophila_brain_model.model as model
 import data
 from profile_dec import profile
+
+class NeuronSim:
+    def __init__(self, df_neu, df_con, dataset_name, neurons_to_activate, runtime = 1000 * ms) -> None:
+        pass
+        self.spike_queue = Queue()
+        self.input_queue = Queue()
+        self.brian_control_queue = Queue()
+        neuron_thread = threading.Thread(
+            target=start_neuron_sim, 
+            args=(df_neu, df_con, dataset_name, neurons_to_activate, self.brian_control_queue, self.spike_queue, self.input_queue),
+            kwargs={"runtime": runtime}
+        )
+        neuron_thread.start()
+
+    def start(self, params):
+        self.brian_control_queue.put(("start", params))
 
 def start_neuron_sim(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue: queue.Queue, runtime=100_000 * ms):
     start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue, runtime)
@@ -49,6 +67,8 @@ def start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_q
 
     # neu, syn, spk_mon = model.create_model(df_comp, df_con, params)
 
+    neurons_indexes = [flyid2i[flyid] for flyid in neurons_to_activate]
+
     neu = NeuronGroup( # create neurons
         N = len(df_comp),
         model = model_eqs,
@@ -63,13 +83,28 @@ def start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_q
     syn = Synapses(neu, neu, 'w : volt', on_pre='g += w', delay=t_dly, name='default_synapses')
     i_pre = df_con.loc[:, 'Presynaptic_Index'].values
     i_post = df_con.loc[:, 'Postsynaptic_Index'].values
+
+    '''
+    print("filtered syns", np.where((i_pre == neurons_indexes[0]) & (i_pre == neurons_indexes[1])))
+    print("filtered syns", i_pre == neurons_indexes[0])
+    print(np.where(i_pre == neurons_indexes[0])[0].shape)
+    filtered = np.where((i_pre == neurons_indexes[0]) | (i_pre == neurons_indexes[1]))[0]
+    filtered = np.where((i_pre == neurons_indexes[0]))[0]
+    i_pre = i_pre[filtered]
+    i_post = i_post[filtered]
+    '''
+
     syn.connect(i=i_pre, j=i_post)
+
+    '''
+    syn.w = df_con.loc[:,'Excitatory x Connectivity'].values[filtered] * synapse_weight * 2
+    with np.printoptions(threshold=sys.maxsize):
+        print("weights from first neuron", np.stack((i2flyid_np(i_post), df_con.loc[:,'Excitatory x Connectivity'].values[filtered]), 1))
+    '''
 
     spk_mon = SpikeMonitor(neu) 
 
     _, synapse_map, reverse_synapse_map = data.get_synapse_map(dataset)
-
-    neurons_indexes = [flyid2i[flyid] for flyid in neurons_to_activate]
 
     # poi_inp, neu = model.poi(neu, neurons_i, [], params)
     pois = []
@@ -145,6 +180,8 @@ def start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_q
             # spike_queue.put((time[:] / brian2.second, points))
         # else:
             # spike_queue.put((time[:] / brian2.second, []))
+
+        print(np.sort(neu.v))
 
         paused = False
         while True:

@@ -10,3 +10,100 @@ can't make egl window -> restart computer
 note: downgrade cython to 3.0.9
 
 scipy==1.14.1
+
+learn ideas:
+group by limb for spike count targeting
+problem where exploding weights prioritize exactly length 5 routes to the neurons
+figure out how to penalize too many spikes from too many neurons
+figure out how to penalize bigger weights aka further from measurements
+tweak fake nn more??
+use spike data to inform nn?
+figure out correct nonlinearity for fake nn?
+more fake nns for other parameters? (refractoriness, speed)
+
+mcns cell_type == ltm is likely where to find missing tarsus motor neurons
+
+with only 10045's synapses:
+{10045.0: 20, 10056.0: 20, 800716.0: 6, 10420.0: 6, 10949.0: 6, 941319.0: 6, 902504.0: 5, 10113.0: 5, 902501.0: 3}
+10045 x2 strength:
+{10045.0: 20, 10056.0: 20, 800716.0: 19, 10420.0: 19, 10949.0: 10, 941319.0: 10, 902504.0: 10, 10113.0: 10, 902501.0: 10, 818556.0: 10, 11982.0: 9, 10891.0: 6, 800114.0: 6, 800896.0: 6, 801382.0: 6, 12266.0: 6, 805626.0: 6, 73753.0: 6, 804444.0: 6, 800288.0: 6, 801882.0: 6, 13068.0: 6, 800323.0: 6, 13096.0: 5, 16828.0: 5, 800375.0: 5, 802438.0: 5, 802324.0: 5, 56138.0: 5, 800345.0: 5, 800529.0: 5, 800553.0: 5, 12588.0: 4, 12683.0: 4, 800452.0: 4, 903545.0: 4, 800731.0: 4, 10898.0: 3, 801084.0: 3, 82663.0: 2, 11158.0: 2, 800921.0: 2, 801019.0: 2, 801261.0: 2, 805004.0: 2}
+[    800716        236]
+[     10420        231]
+[     10949        218]
+[    941319        202]
+[    902504        175]
+[     10113        167]
+[    902501        147]
+[    818556        135]
+[     11982        125]
+[     10891        123]
+[    800114        121]
+[    800896        121]
+[    801382        119]
+[     10056        119]
+[     12266        113]
+[    805626        110]
+[     73753        107]
+[    804444        107]
+[    800288        100]
+and 10056:
+{10045.0: 20, 10056.0: 20, 800434.0: 6, 800618.0: 6, 10638.0: 6, 800827.0: 6, 531425.0: 5, 800531.0: 5, 800685.0: 5, 800009.0: 5, 801235.0: 5, 800296.0: 4, 80017
+3.0: 4, 801804.0: 3, 800003.0: 2}
+[    800434        220]
+[    800618        216]
+[     10638        210]
+[    800827        206]
+[    531425        188]
+[    800531        180]
+[    800685        170]
+[    800009        167]
+[    801235        167]
+[    800296        160]
+[    800173        155]
+[    801804        151]
+[    800003        140]
+[     10559        135]
+[    801050        135]
+[    800329        127]
+[    911967        123]
+[     10045        119]
+[     12644        117]
+[     90051        112]
+[    522823        110]
+[     10785        109]
+[     10475        105]
+[    801318        105]
+[    800286        104]
+[    903366        101]
+ [     10891         17]
+both:
+{10045.0: 20, 10056.0: 20, 10420.0: 10, 800716.0: 6, 10638.0: 6, 800434.0: 6, 10949.0: 6, 800618.0: 6, 800827.0: 6, 941319.0: 6, 531425.0: 5, 800531.0: 5, 902504
+.0: 5, 800685.0: 5, 10113.0: 5, 800009.0: 5, 800329.0: 5, 801235.0: 5, 800296.0: 4, 800173.0: 4, 801804.0: 3, 800323.0: 3, 902501.0: 3, 11982.0: 2, 10891.0: 2, 800003.0: 2}
+
+installed level-zero from source here's the files it touched
+-- Install configuration: "Release"
+-- Installing: /usr/local/./include/level_zero/ze_api.h
+-- Installing: /usr/local/./include/level_zero/ze_ddi.h
+-- Installing: /usr/local/./include/level_zero/ze_ddi_common.h
+-- Installing: /usr/local/./include/level_zero/zer_api.h
+-- Installing: /usr/local/./include/level_zero/zer_ddi.h
+-- Installing: /usr/local/./include/level_zero/zes_api.h
+-- Installing: /usr/local/./include/level_zero/zes_ddi.h
+-- Installing: /usr/local/./include/level_zero/zet_api.h
+-- Installing: /usr/local/./include/level_zero/zet_ddi.h
+-- Installing: /usr/local/./include/level_zero/layers/zel_tracing_api.h
+-- Installing: /usr/local/./include/level_zero/layers/zel_tracing_ddi.h
+-- Installing: /usr/local/./include/level_zero/layers/zel_tracing_register_cb.h
+-- Installing: /usr/local/./include/level_zero/loader/ze_loader.h
+-- Installing: /usr/local/lib/libze_loader.so.1.28.0
+-- Installing: /usr/local/lib/libze_loader.so.1
+-- Installing: /usr/local/lib/libze_loader.so
+-- Installing: /usr/local/lib/pkgconfig/libze_loader.pc
+-- Installing: /usr/local/lib/pkgconfig/level-zero.pc
+-- Installing: /usr/local/lib/libze_validation_layer.so.1.28.0
+-- Installing: /usr/local/lib/libze_validation_layer.so.1
+-- Installing: /usr/local/lib/libze_validation_layer.so
+-- Installing: /usr/local/lib/libze_tracing_layer.so.1.28.0
+-- Installing: /usr/local/lib/libze_tracing_layer.so.1
+-- Installing: /usr/local/lib/libze_tracing_layer.so
+[loganr@loptop build]$

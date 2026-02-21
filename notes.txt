@@ -11,6 +11,13 @@ note: downgrade cython to 3.0.9
 
 scipy==1.14.1
 
+todos:
+limit angle
+mess with starting pose more? should be more ?flat?
+tarsii
+force? 
+save params?
+
 learn ideas:
 group by limb for spike count targeting
 problem where exploding weights prioritize exactly length 5 routes to the neurons

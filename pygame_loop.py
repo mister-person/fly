@@ -57,13 +57,12 @@ def start_pygame(spike_queue: Queue, control_queue: Queue, frame_queue: Queue, d
         # synapse_coords_filename = "../flywire/fafb_v783_princeton_synapse_table.csv"
         # SYNAPSES_FILENAME = "./2023_03_23_connectivity_630_final.parquet"
         pass
-        
 
     _, synapse_map, _ = data.get_synapse_map(dataset)
 
     spike_drawer = drawutils.SpikeDrawer(WIDTH, HEIGHT)
     spike_drawer.time_size = 1
-    spike_drawer.unit_height = 2
+    spike_drawer.set_unit_height(1)
     # neuron_drawer = drawutils.NeuronDrawer(neuron_coords_path, WIDTH, HEIGHT)
     spike_drawer.color_map.update(color_map)
     for n in color_map.keys():
@@ -150,7 +149,7 @@ def start_pygame(spike_queue: Queue, control_queue: Queue, frame_queue: Queue, d
     '''
 
     for leg in neuron_groups.legs:
-        neurons = neuron_groups.mbanc_by_leg[leg]
+        neurons = neuron_groups.banc_by_leg[leg]
         leg_index = (neuron_groups.legs.index(leg) * 5) % 7
         color_1 = (200 - leg_index * 25, 100 + leg_index * 25, 255)
         color_2 = (150 - leg_index * 25, 80 + leg_index * 25, 200)
@@ -286,7 +285,6 @@ def start_pygame(spike_queue: Queue, control_queue: Queue, frame_queue: Queue, d
         # screen.blit(neuron_surface)
         screen.blit(synapse_surface)
         synapse_surface.fill((0, 0, 0, 0))
-
 
         screen.blit(frame_surface, (0, 100))
 

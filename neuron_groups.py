@@ -116,40 +116,54 @@ def load_mbanc_leg_neuron_groups(filename: str, use_cache = True):
     return mbanc_neuron_groups
 
 banc_leg_neuron_groups = load_banc_leg_neuron_groups("data/banc_leg_neuron_groups.pickle")
+print("banc leg neuron grousp", banc_leg_neuron_groups)
 mbanc_leg_neuron_groups = load_mbanc_leg_neuron_groups("data/mbanc_leg_neuron_groups.pickle")
 
 legs = ["lf", "rm", "lh", "rf", "lm", "rh"]
-mbanc_legs = defaultdict(list)
-for key in mbanc_leg_neuron_groups.keys():
-    neurons = mbanc_leg_neuron_groups[key]
-    for leg in legs:
-        if key.startswith(leg):
-            for neuron in neurons:
-                mbanc_legs[leg].append((key, neuron))
-            break
+
+def by_leg_helper(dataset_name):
+    group = mbanc_leg_neuron_groups if dataset_name == "mbanc" else banc_leg_neuron_groups
+    by_leg = defaultdict(list)
+    for key in group.keys():
+        neurons = group[key]
+        for leg in legs:
+            if key.startswith(leg):
+                for neuron in neurons:
+                    by_leg[leg].append((key, neuron))
+                break
+        else:
+            print("extra key", key)
+        # dark_color.extend([(key, neuron) for neuron in neuron_groups.mbanc_leg_neuron_groups[key]])
+    return by_leg
+
+mbanc_by_leg = by_leg_helper("mbanc")
+banc_by_leg = by_leg_helper("banc")
+
+def leg_neurons_helper(dataset_name, leg_name):
+    if dataset_name == "banc":
+        leg_neurons = banc_leg_neuron_groups
+    elif dataset_name == "mbanc":
+        leg_neurons = mbanc_leg_neuron_groups
     else:
-        print("extra key", key)
-    # dark_color.extend([(key, neuron) for neuron in neuron_groups.mbanc_leg_neuron_groups[key]])
+        raise Exception("unknown dataset")
 
-mbanc_rf_leg_neurons = (mbanc_leg_neuron_groups["rf_trochanter_flexor"] + 
-    mbanc_leg_neuron_groups["rf_trochanter_extensor"] + 
-    mbanc_leg_neuron_groups["rf_tibia_extensor"] + 
-    mbanc_leg_neuron_groups["rf_tibia_flexor"] + 
-    mbanc_leg_neuron_groups["rf_tarsus_depressor"] + 
-    mbanc_leg_neuron_groups["rf_tarsus_levetator"] + 
-    mbanc_leg_neuron_groups["rf_long_tendon"] + 
-    mbanc_leg_neuron_groups["rf_femur_reductor"])
+    return (leg_neurons[leg_name + "_trochanter_flexor"] + 
+        leg_neurons[leg_name + "_trochanter_extensor"] + 
+        leg_neurons[leg_name + "_tibia_extensor"] + 
+        leg_neurons[leg_name + "_tibia_flexor"] + 
+        leg_neurons[leg_name + "_tarsus_depressor"] + 
+        leg_neurons[leg_name + "_tarsus_levetator"] + 
+        leg_neurons[leg_name + "_long_tendon"] + 
+        leg_neurons[leg_name + "_femur_reductor"])
 
-mbanc_lf_leg_neurons = (mbanc_leg_neuron_groups["lf_trochanter_flexor"] + 
-    mbanc_leg_neuron_groups["lf_trochanter_extensor"] + 
-    mbanc_leg_neuron_groups["lf_tibia_extensor"] + 
-    mbanc_leg_neuron_groups["lf_tibia_flexor"] + 
-    mbanc_leg_neuron_groups["lf_tarsus_depressor"] + 
-    mbanc_leg_neuron_groups["lf_tarsus_levetator"] + 
-    mbanc_leg_neuron_groups["lf_long_tendon"] + 
-    mbanc_leg_neuron_groups["lf_femur_reductor"])
+mbanc_rf_leg_neurons = leg_neurons_helper("mbanc", "rf")
+mbanc_lf_leg_neurons = leg_neurons_helper("mbanc", "lf")
+
+banc_rf_leg_neurons = leg_neurons_helper("banc", "rf")
+banc_lf_leg_neurons = leg_neurons_helper("banc", "lf")
 
 mbanc_leg_neurons = [x for xs in mbanc_leg_neuron_groups.values() for x in xs]
+banc_leg_neurons = [x for xs in banc_leg_neuron_groups.values() for x in xs]
 
 if __name__ == "__main__":
     banc_leg_neuron_groups = load_banc_leg_neuron_groups("data/banc_leg_neuron_groups.pickle", use_cache=False)

@@ -106,11 +106,13 @@ class SpikeDrawer():
 
         self.color_map: dict[int, tuple[int, int, int]] = defaultdict(lambda: (255, 255, 255))
 
-        self.unit_height = 2
-
-        self.max_neurons = self.height // self.unit_height + 1
+        self.set_unit_height(2)
 
         self.reset_surfaces()
+
+    def set_unit_height(self, unit_height):
+        self.unit_height = unit_height
+        self.max_neurons = self.height // self.unit_height + 1
 
     @property
     def start_time(self):

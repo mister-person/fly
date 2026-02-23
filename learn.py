@@ -92,6 +92,7 @@ def wrapper_thing():
     color_map = {}
     for n in neurons_to_activate:
         color_map[n] = (255, 255, 0)
+    color_map.update(setup_color_map())
     pygame_process = pygame_loop.PygameProcess(dataset_name, color_map)
 
     '''
@@ -282,6 +283,69 @@ def get_reward(spikes, runtime, excluded_neurons, dataset_name):
     print("SCORE!!!", sum(result.values()) + (100 - len(result)) * 13)
     return result
     # return sum([math.sqrt(x) for x in counter.values()])
+
+def setup_color_map():
+    color_map = {}
+    for leg in neuron_groups.legs:
+        neurons = neuron_groups.banc_by_leg[leg]
+        leg_index = (neuron_groups.legs.index(leg) * 5) % 7
+        color_1 = (200 - leg_index * 25, 100 + leg_index * 25, 255)
+        color_2 = (150 - leg_index * 25, 80 + leg_index * 25, 200)
+        color_3 = (200 - leg_index * 25, 255, 100 + leg_index * 25)
+        color_4 = (150 - leg_index * 25, 200, 80 + leg_index * 25)
+        for i, (key, neuron) in enumerate(neurons):
+            # print(key, neuron)
+            if "extensor" in key or "levetator" in key:
+                if i % 2 == 0:
+                    color_map[neuron] = color_1
+                else:
+                    color_map[neuron] = color_2
+            else:
+                if i % 2 == 0:
+                    color_map[neuron] = color_3
+                else:
+                    color_map[neuron] = color_4
+        
+    color_map[neuron_groups.mbanc_leg_neuron_groups["rf_trochanter_extensor"][0]] = (180, 180, 180)
+
+    target_neurons = [
+        720575941669833905,
+        720575941560438643,
+        720575941504247575,
+        720575941527002649,
+        720575941554038555,
+        720575941552245822,
+
+        720575941469024064,720575941487873488,720575941545638505,720575941625121674,720575941437338412,720575941519468654
+    ]
+    for i, n in enumerate(target_neurons):
+        if i % 2 == 0:
+            color_map[n] = (255, 255, 255)
+        else:
+            color_map[n] = (200, 200, 200)
+    red_neurons = [720575941496703104,720575941503572133,720575941589995319,720575941441065919,720575941544954556,720575941687554799,
+    ]
+    for i, n in enumerate(red_neurons):
+        if i % 2 == 0:
+            color_map[n] = (255, 100, 100)
+        else:
+            color_map[n] = (200, 100, 100)
+
+    yellow_neurons = [720575941569601650,720575941515421443,720575941555553363,720575941414465684,720575941461249747,720575941649246741]
+    for i, n in enumerate(yellow_neurons):
+        if i % 2 == 0:
+            color_map[n] = (255, 255, 100)
+        else:
+            color_map[n] = (200, 200, 100)
+
+    purple_neurons = [720575941626500746]
+    for i, n in enumerate(purple_neurons):
+        if i % 2 == 0:
+            color_map[n] = (255, 100, 255)
+        else:
+            color_map[n] = (200, 100, 200)
+    return color_map
+
 
 def spike_stats(spikes):
     spike_counter = defaultdict(int)

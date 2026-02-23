@@ -13,7 +13,8 @@ from drawutils import SpikeDrawer
 import sys
 import os
 import Drosophila_brain_model.model as model
-from gymtest import setup_fly, start_mjc_thread
+from gymtest import setup_fly
+import gymtest
 import neuron_groups
 import neuron_model
 import pygame_loop
@@ -44,15 +45,17 @@ def start_sim(df_comp, df_con, neurons_to_activate):
     frame_queue = mp_context.Queue()
     # frame_queue.put((700, 700, np.empty(shape=(700*700*3,), dtype=np.int8).tobytes(), 0))
     target_func = pygame_loop.start_pygame
-    render_process = mp_context.Process(target=target_func, args=[pygame_spike_queue, control_queue, frame_queue, dataset, neurons_to_activate])
+    render_process = mp_context.Process(target=target_func, args=[pygame_spike_queue, control_queue, frame_queue, dataset, {n: (255, 255, 255) for n in neurons_to_activate}])
     render_process.start()
 
     # neurons = set(neuron_groups.rf_leg_motor_neurons)
 
-    mjc_spikes_queue = Queue()
-    obs_queue = Queue()
-    mjc_thread = threading.Thread(target=start_mjc_thread, args=(dataset, mjc_spikes_queue, frame_queue, obs_queue))
-    mjc_thread.start()
+    # mjc_spikes_queue = Queue()
+    # obs_queue = Queue()
+    # mjc_thread = threading.Thread(target=start_mjc_thread, args=(dataset, mjc_spikes_queue, frame_queue, obs_queue))
+    # mjc_thread.start()
+
+    mjc_thread = gymtest.MjcSim(dataset_name=dataset)
 
     spike_queue = Queue()
     input_queue = Queue()
@@ -67,7 +70,7 @@ def start_sim(df_comp, df_con, neurons_to_activate):
     last_time = time.monotonic()
     while True:
         update_time, spikes = spike_queue.get()
-        _ = obs_queue.get()
+        _ = mjc_thread.obs_queue.get()
         input_queue.put(())
 
         spikes_acc.extend(spikes)
@@ -76,7 +79,7 @@ def start_sim(df_comp, df_con, neurons_to_activate):
         times_acc.extend(times)
         # spike_and_times = np.stack((times, spikes), 1, dtype=object)
         # pygame_spike_queue.put((now, spike_and_times))
-        mjc_spikes_queue.put(spikes, False)
+        mjc_thread.put_spikes(spikes)
 
         now = time.monotonic()
         if now - last_time > 1/20:

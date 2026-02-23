@@ -44,29 +44,11 @@ def start_pygame(spike_queue: Queue, control_queue: Queue, frame_queue: Queue, d
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
 
-    if dataset == "banc":
-        neuron_coords_path = "../flywire/banc_coordinates.csv"
-        synapse_coords_filename = "../flywire/banc_connections_princeton.csv"
-        SYNAPSES_FILENAME = "./banc_connectivity.parquet"
-    elif dataset == "fafb":
-        neuron_coords_path = "../flywire/fafb_coordinates.csv"
-        synapse_coords_filename = "../flywire/fafb_v783_princeton_synapse_table.csv"
-        SYNAPSES_FILENAME = "./2023_03_23_connectivity_630_final.parquet"
-    elif dataset == "mbanc":
-        # neuron_coords_path = "../flywire/fafb_coordinates.csv"
-        # synapse_coords_filename = "../flywire/fafb_v783_princeton_synapse_table.csv"
-        # SYNAPSES_FILENAME = "./2023_03_23_connectivity_630_final.parquet"
-        pass
-
     _, synapse_map, _ = data.get_synapse_map(dataset)
 
     spike_drawer = drawutils.SpikeDrawer(WIDTH, HEIGHT)
     spike_drawer.time_size = 1
     spike_drawer.set_unit_height(1)
-    # neuron_drawer = drawutils.NeuronDrawer(neuron_coords_path, WIDTH, HEIGHT)
-    spike_drawer.color_map.update(color_map)
-    for n in color_map.keys():
-        spike_drawer.neurons.append(n)
 
     fft_drawer = drawutils.FFTDrawer(WIDTH, HEIGHT)
     fft_drawer.update_freq = float("inf")
@@ -81,99 +63,9 @@ def start_pygame(spike_queue: Queue, control_queue: Queue, frame_queue: Queue, d
         else:
             spike_drawer.color_map[neuron] = (0, random.randrange(0, 255), 255)
         
-    #TODO all this color stuff shouldn't be in this file
-    target_neurons = [
-        720575941669833905,
-        720575941560438643,
-        720575941504247575,
-        720575941527002649,
-        720575941554038555,
-        720575941552245822,
-
-        720575941469024064,720575941487873488,720575941545638505,720575941625121674,720575941437338412,720575941519468654
-    ]
-    for i, n in enumerate(target_neurons):
+    for n in color_map.keys():
         spike_drawer.neurons.append(n)
-        if i % 2 == 0:
-            spike_drawer.color_map[n] = (255, 255, 255)
-        else:
-            spike_drawer.color_map[n] = (200, 200, 200)
-    red_neurons = [720575941496703104,720575941503572133,720575941589995319,720575941441065919,720575941544954556,720575941687554799,
-    ]
-    for i, n in enumerate(red_neurons):
-        spike_drawer.neurons.append(n)
-        if i % 2 == 0:
-            spike_drawer.color_map[n] = (255, 100, 100)
-        else:
-            spike_drawer.color_map[n] = (200, 100, 100)
-
-    yellow_neurons = [720575941569601650,720575941515421443,720575941555553363,720575941414465684,720575941461249747,720575941649246741]
-    for i, n in enumerate(yellow_neurons):
-        spike_drawer.neurons.append(n)
-        if i % 2 == 0:
-            spike_drawer.color_map[n] = (255, 255, 100)
-        else:
-            spike_drawer.color_map[n] = (200, 200, 100)
-
-    purple_neurons = [720575941626500746]
-    for i, n in enumerate(purple_neurons):
-        spike_drawer.neurons.append(n)
-        if i % 2 == 0:
-            spike_drawer.color_map[n] = (255, 100, 255)
-        else:
-            spike_drawer.color_map[n] = (200, 100, 200)
-
-    '''
-    right_front_leg_motor = neuron_groups.mbanc_rf_leg_neurons
-    for i, n in enumerate(right_front_leg_motor):
-        spike_drawer.neurons.append(n)
-        if i % 2 == 0:
-            spike_drawer.color_map[n] = (200, 255, 100)
-        else:
-            spike_drawer.color_map[n] = (150, 200, 80)
-    left_front_leg_motor = neuron_groups.mbanc_lf_leg_neurons
-    for i, n in enumerate(left_front_leg_motor):
-        spike_drawer.neurons.append(n)
-        if i % 2 == 0:
-            spike_drawer.color_map[n] = (50, 255, 150)
-        else:
-            spike_drawer.color_map[n] = (20, 200, 100)
-    all_leg_motor = neuron_groups.mbanc_leg_neurons
-    for i, n in enumerate(all_leg_motor):
-        if n not in spike_drawer.neurons:
-            spike_drawer.neurons.append(n)
-            if i % 2 == 0:
-                spike_drawer.color_map[n] = (150, 255, 150)
-            else:
-                spike_drawer.color_map[n] = (100, 200, 100)
-    '''
-
-    for leg in neuron_groups.legs:
-        neurons = neuron_groups.banc_by_leg[leg]
-        leg_index = (neuron_groups.legs.index(leg) * 5) % 7
-        color_1 = (200 - leg_index * 25, 100 + leg_index * 25, 255)
-        color_2 = (150 - leg_index * 25, 80 + leg_index * 25, 200)
-        color_3 = (200 - leg_index * 25, 255, 100 + leg_index * 25)
-        color_4 = (150 - leg_index * 25, 200, 80 + leg_index * 25)
-        for i, (key, neuron) in enumerate(neurons):
-            # print(key, neuron)
-            spike_drawer.neurons.append(neuron)
-            if "extensor" in key or "levetator" in key:
-                if i % 2 == 0:
-                    spike_drawer.color_map[neuron] = color_1
-                else:
-                    spike_drawer.color_map[neuron] = color_2
-            else:
-                if i % 2 == 0:
-                    spike_drawer.color_map[neuron] = color_3
-                else:
-                    spike_drawer.color_map[neuron] = color_4
-        
-    spike_drawer.color_map[neuron_groups.mbanc_leg_neuron_groups["rf_trochanter_extensor"][0]] = (180, 180, 180)
-
-    #for r in red_neurons:
-    # for t in target_neurons:
-        # print(t, "", synapse_map[t])
+    spike_drawer.color_map.update(color_map)
 
     running = True
     paused = False

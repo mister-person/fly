@@ -1,0 +1,14 @@
+/home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/deps/pyo3_build_config-e76712cfa4ad03e1.d: /home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/lib.rs /home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/errors.rs /home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/impl_.rs /home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/build/pyo3-build-config-34804365372198f4/out/pyo3-build-config-file.txt /home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/build/pyo3-build-config-34804365372198f4/out/pyo3-build-config.txt
+
+/home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/deps/libpyo3_build_config-e76712cfa4ad03e1.rlib: /home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/lib.rs /home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/errors.rs /home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/impl_.rs /home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/build/pyo3-build-config-34804365372198f4/out/pyo3-build-config-file.txt /home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/build/pyo3-build-config-34804365372198f4/out/pyo3-build-config.txt
+
+/home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/deps/libpyo3_build_config-e76712cfa4ad03e1.rmeta: /home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/lib.rs /home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/errors.rs /home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/impl_.rs /home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/build/pyo3-build-config-34804365372198f4/out/pyo3-build-config-file.txt /home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/build/pyo3-build-config-34804365372198f4/out/pyo3-build-config.txt
+
+/home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/lib.rs:
+/home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/errors.rs:
+/home/loganr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.25.1/src/impl_.rs:
+/home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/build/pyo3-build-config-34804365372198f4/out/pyo3-build-config-file.txt:
+/home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/build/pyo3-build-config-34804365372198f4/out/pyo3-build-config.txt:
+
+# env-dep:CARGO_PKG_VERSION=0.25.1
+# env-dep:OUT_DIR=/home/loganr/Desktop/programming/fly/project/rust_utils/target/debug/build/pyo3-build-config-34804365372198f4/out

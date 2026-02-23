@@ -9,6 +9,7 @@ neuron_coords_path = "../flywire/banc_coordinates.csv"
 # neuron_coords_path = "../flywire/fafb_coordinates.csv"
 neuron_coords = pd.read_csv(neuron_coords_path).to_numpy()
 synapse_filename = "../flywire/fafb_v783_princeton_synapse_table.csv"
+synapse_filename = "../flywire/banc_connections_princeton.csv"
 synapse_file = open(synapse_filename, "rb")
 print("done loading synapses")
 

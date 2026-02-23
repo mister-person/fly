@@ -33,8 +33,9 @@ cq = pyopencl.CommandQueue(ctx)
 '''
 
 class NeuronDrawer():
-    def __init__(self, neuron_coords_path, width: int, height: int):
-        neuron_coords = pd.read_csv(neuron_coords_path).to_numpy()
+    def __init__(self, neuron_coords, width: int, height: int):
+        if type(neuron_coords) == str:
+            neuron_coords = pd.read_csv(neuron_coords).to_numpy()
         print(neuron_coords[:30])
 
         self.dirty = True
@@ -82,13 +83,18 @@ class NeuronDrawer():
         elif not self.dirty:
             return self.surface
 
+        print("sfdajk")
         self.surface.fill((0, 0, 0, 0))
+        boop = True
         for id, positions in self.coord_map.items():
             for pos in positions:
                 #pygame.draw.circle(screen, "blue", to_screen_coords(pos), 1)
                 screen_pos = self.to_screen_coords(pos)
                 existing_color = self.surface.get_at(screen_pos)
                 self.surface.set_at(screen_pos, addc(existing_color, self.color_map[id]))
+                if boop:
+                    print(self.color_map[id])
+                    boop = False
 
         self.dirty = False
         return self.surface

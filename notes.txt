@@ -11,11 +11,18 @@ note: downgrade cython to 3.0.9
 
 scipy==1.14.1
 
+interesting scripts:
+draw_spikes.py
+banc_syn_count.py
+datatest2.py
+realtime.py
+learn.py
+
 todos:
 limit angle
 mess with starting pose more? should be more ?flat?
 tarsii
-force? 
+force?
 save params?
 
 learn ideas:

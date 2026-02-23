@@ -21,7 +21,7 @@ fafb_comp_np = pd.read_csv(path_comp, index_col=0).to_numpy()
 fafb_con_np = pd.read_parquet(path_con).to_numpy()
 """
 
-fafb_class = pd.read_csv("../flywire/fafb_classification.csv").to_numpy()
+fafb_class = pd.read_csv("./data/fafb_classification.csv").to_numpy()
 print(fafb_class)
 fafb_class = fafb_class.astype("str")
 
@@ -37,7 +37,7 @@ print(fafb_classes)
 
 print()
 
-banc_class = pd.read_csv("../flywire/banc_neurons.csv").to_numpy()
+banc_class = pd.read_csv("./data/banc_neurons.csv").to_numpy()
 banc_class = banc_class.astype("str")
 
 print("banc flows:")
@@ -79,9 +79,9 @@ WIDTH, HEIGHT = (1500, 1200)
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 clock = pygame.time.Clock()
 font = pygame.font.Font(size=50)
-drawer_fafb = drawutils.NeuronDrawer("../flywire/fafb_coordinates.csv", WIDTH, HEIGHT)
-drawer_banc = drawutils.NeuronDrawer("../flywire/banc_coordinates.csv", WIDTH, HEIGHT)
-# drawer_banc = drawutils.NeuronDrawer("../flywire/body-neurotransmitters-male-cns-v0.9.feather", WIDTH, HEIGHT)
+drawer_fafb = drawutils.NeuronDrawer("./data/fafb_coordinates.csv", WIDTH, HEIGHT)
+drawer_banc = drawutils.NeuronDrawer("./data/banc_coordinates.csv", WIDTH, HEIGHT)
+# drawer_banc = drawutils.NeuronDrawer("./data/body-neurotransmitters-male-cns-v0.9.feather", WIDTH, HEIGHT)
 '''
 for n_id in drawer.coord_map.keys():
     c = fafb_class_dict[n_id]
@@ -103,18 +103,18 @@ print("done")
 
 configs = {
     "banc": {
-        "class_arr": pd.read_csv("../flywire/banc_neurons.csv").to_numpy().astype("str"),
-        "coord_arr": pd.read_csv("../flywire/banc_coordinates.csv").to_numpy(),
+        "class_arr": pd.read_csv("./data/banc_neurons.csv").to_numpy().astype("str"),
+        "coord_arr": pd.read_csv("./data/banc_coordinates.csv").to_numpy(),
         "class_col": 10,
     },
     "fafb": {
-        "class_arr": pd.read_csv("../flywire/fafb_classification.csv").to_numpy().astype("str"),
-        "coord_arr": pd.read_csv("../flywire/fafb_coordinates.csv").to_numpy(),
+        "class_arr": pd.read_csv("./data/fafb_classification.csv").to_numpy().astype("str"),
+        "coord_arr": pd.read_csv("./data/fafb_coordinates.csv").to_numpy(),
         "class_col": 2,
     },
     "mbanc": {
-        "class_arr": pd.read_feather("../flywire/body-annotations-male-cns-v0.9-minconf-0.5.feather")[["bodyId", "superclass"]].astype({"superclass": str}).dropna().to_numpy(),
-        "coord_arr": pd.read_feather("../flywire/body-annotations-male-cns-v0.9-minconf-0.5.feather")[["bodyId", "somaLocation"]].dropna().astype({"somaLocation": str}).to_numpy(),
+        "class_arr": pd.read_feather("./data/body-annotations-male-cns-v0.9-minconf-0.5.feather")[["bodyId", "superclass"]].astype({"superclass": str}).dropna().to_numpy(),
+        "coord_arr": pd.read_feather("./data/body-annotations-male-cns-v0.9-minconf-0.5.feather")[["bodyId", "somaLocation"]].dropna().astype({"somaLocation": str}).to_numpy(),
         "class_col": 1,
     },
 }

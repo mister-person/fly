@@ -44,7 +44,7 @@ fn rust_utils(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[test]
 fn test_load() {
     Python::with_gil(|py| {
-        load_synapses(py, "./flywire/fafb_v783_princeton_synapse_table.csv");
+        load_synapses(py, "./data/fafb_v783_princeton_synapse_table.csv");
     }
     )
 }

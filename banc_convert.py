@@ -1,14 +1,14 @@
 import numpy as np
 import pandas as pd
 
-n = pd.read_csv("../flywire/banc_neurons.csv").to_numpy()
+n = pd.read_csv("./data/banc_neurons.csv").to_numpy()
 
 n_out = np.concatenate((np.expand_dims(n[:, 0], 1), np.expand_dims(np.full(n.shape[0], True, dtype="O"), 1)), 1)
 
 n_df = pd.DataFrame(n_out, columns=("", "Completed"))
 n_df.to_csv("banc_completeness.csv", index=False)
 
-con = pd.read_csv("../flywire/banc_connections_princeton.csv").to_numpy()
+con = pd.read_csv("./data/banc_connections_princeton.csv").to_numpy()
 print(con)
 
 id_index = {}

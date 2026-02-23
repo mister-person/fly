@@ -22,14 +22,14 @@ if len(argv) > 1:
 print("reading from", SPIKE_FILE)
 
 if "banc" in argv:
-    neuron_coords_path = "../flywire/banc_coordinates.csv"
+    neuron_coords_path = "./data/banc_coordinates.csv"
     neuron_coords = pd.read_csv(neuron_coords_path).to_numpy()
-    synapse_coords_filename = "../flywire/banc_connections_princeton.csv"
+    synapse_coords_filename = "./data/banc_connections_princeton.csv"
     SYNAPSES_FILENAME = "./data/banc_connectivity.parquet"
 else:
-    neuron_coords_path = "../flywire/fafb_coordinates.csv"
+    neuron_coords_path = "./data/fafb_coordinates.csv"
     neuron_coords = pd.read_csv(neuron_coords_path).to_numpy()
-    synapse_coords_filename = "../flywire/fafb_v783_princeton_synapse_table.csv"
+    synapse_coords_filename = "./data/fafb_v783_princeton_synapse_table.csv"
     # SYNAPSES_FILENAME = "./Drosophila_brain_model/2023_03_23_connectivity_630_final.parquet"
     SYNAPSES_FILENAME = "./Drosophila_brain_model/Connectivity_783.parquet"
 synapse_coords_file = open(synapse_coords_filename, "rb")

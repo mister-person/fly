@@ -78,9 +78,9 @@ def get_synapse_map(dataset):
 banc_walk = [720575941626500746, 720575941491992807] #walk
 
 def process_mbanc_data(filter_optic = False):
-    df_con_initial = pd.read_feather('../flywire/connectome-weights-male-cns-v0.9-minconf-0.5.feather')
-    nts = pd.read_feather("../flywire/body-neurotransmitters-male-cns-v0.9.feather")
-    df_neurons = pd.read_feather("../flywire/body-annotations-male-cns-v0.9-minconf-0.5.feather")
+    df_con_initial = pd.read_feather('./data/connectome-weights-male-cns-v0.9-minconf-0.5.feather')
+    nts = pd.read_feather("./data/body-neurotransmitters-male-cns-v0.9.feather")
+    df_neurons = pd.read_feather("./data/body-annotations-male-cns-v0.9-minconf-0.5.feather")
     #filter out synapses with neurons that aren't in the neuron table
     l = len(df_neurons)
     pre_syns_indexes = np.searchsorted(df_neurons["bodyId"], df_con_initial["body_pre"])

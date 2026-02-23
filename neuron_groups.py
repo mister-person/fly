@@ -60,7 +60,7 @@ def load_banc_leg_neuron_groups(filename: str, use_cache = True):
     }
     banc_muscles_dict = {a: a for a in banc_muscles}
 
-    banc = pd.read_csv("../flywire/banc_neurons.csv")
+    banc = pd.read_csv("./data/banc_neurons.csv")
     banc_neuron_groups = load_leg_neuron_groups(banc, (("Class", "leg_motor_neuron"),), ("Soma side", "Sub Class"), banc_legs, "Primary Cell Type", banc_muscles_dict, "Root ID")
 
     with open(filename, "wb") as f:

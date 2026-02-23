@@ -38,7 +38,7 @@ def run_sim(df_neu, df_con, neurons_to_activate, learned_params, neuron_sim: neu
             break
         update_time, spikes = next_spikes
 
-        obs = mjc_sim.obs_queue.get()
+        obs = mjc_sim.obs_queue.get() #comment out to uncouple mjc sim
         neuron_sim.input_queue.put(()) #TODO actually do this and make method
 
         mjc_sim.put_spikes(spikes)
@@ -55,7 +55,7 @@ def run_sim(df_neu, df_con, neurons_to_activate, learned_params, neuron_sim: neu
     return np.array(times_acc), np.array(spikes_acc).transpose(), obs
 
 def wrapper_thing():
-    dataset_name = "banc"
+    dataset_name = "mbanc"
 
     excluded_neurons = set()
     if dataset_name == "fafb":
@@ -67,7 +67,7 @@ def wrapper_thing():
         neurons_to_activate = [10045, 10056] #walk
         # neurons_to_activate = [] #giant fiber??
 
-        # neu_info = pd.read_feather('../flywire/body-annotations-male-cns-v0.9-minconf-0.5.feather')
+        # neu_info = pd.read_feather('./data/body-annotations-male-cns-v0.9-minconf-0.5.feather')
         # excluded_neurons.update(neu_info[neu_info["superclass"] == "ol_intrinsic"]["bodyId"])
         # excluded_neurons.update(neu_info[neu_info["superclass"].isnull()]["bodyId"])
     else:
@@ -92,7 +92,7 @@ def wrapper_thing():
     color_map = {}
     for n in neurons_to_activate:
         color_map[n] = (255, 255, 0)
-    color_map.update(setup_color_map())
+    color_map.update(setup_color_map(dataset_name))
     pygame_process = pygame_loop.PygameProcess(dataset_name, color_map)
 
     '''
@@ -220,7 +220,7 @@ def get_reward(spikes, runtime, excluded_neurons, dataset_name):
         # all_leg_neurons.update(neurons)
 
     # all_leg_neurons.update(neuron_groups.mbanc_lf_leg_neurons)
-    if dataset_name == "mbanc":
+    if dataset_name == "mbanc" or dataset_name == "mbanc-no-optic":
         all_leg_neurons.update(neuron_groups.mbanc_leg_neurons)
         neurons_by_leg = neuron_groups.mbanc_by_leg
     elif dataset_name == "banc":
@@ -284,10 +284,13 @@ def get_reward(spikes, runtime, excluded_neurons, dataset_name):
     return result
     # return sum([math.sqrt(x) for x in counter.values()])
 
-def setup_color_map():
+def setup_color_map(dataset_name):
     color_map = {}
     for leg in neuron_groups.legs:
-        neurons = neuron_groups.banc_by_leg[leg]
+        if dataset_name == "banc":
+            neurons = neuron_groups.banc_by_leg[leg]
+        if dataset_name == "mbanc" or dataset_name == "mbanc-no-optic":
+            neurons = neuron_groups.mbanc_by_leg[leg]
         leg_index = (neuron_groups.legs.index(leg) * 5) % 7
         color_1 = (200 - leg_index * 25, 100 + leg_index * 25, 255)
         color_2 = (150 - leg_index * 25, 80 + leg_index * 25, 200)

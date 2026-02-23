@@ -6,3 +6,4 @@ results/*
 __pycache__/*
 prof/*
 data/*
+rust_utils/target

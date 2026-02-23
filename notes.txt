@@ -11,6 +11,12 @@ note: downgrade cython to 3.0.9
 
 scipy==1.14.1
 
+https://codex.flywire.ai/api/download?data_product=synapse_table&dataset=fafb
+https://drive.google.com/file/d/1tUMLtXxt5gU1Lu3D9WTkaJC4-W5fnRLC/view?usp=sharing
+
+https://github.com/philshiu/Drosophila_brain_model.git
+https://github.com/NeLy-EPFL/flygym.git
+
 interesting scripts:
 draw_spikes.py
 banc_syn_count.py

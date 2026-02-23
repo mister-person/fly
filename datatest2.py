@@ -5,11 +5,11 @@ import numpy as np
 import rust_utils
 from rust_utils import load_synapses
 
-neuron_coords_path = "../flywire/banc_coordinates.csv"
-# neuron_coords_path = "../flywire/fafb_coordinates.csv"
+# neuron_coords_path = "./data/banc_coordinates.csv"
+neuron_coords_path = "./data/fafb_coordinates.csv"
 neuron_coords = pd.read_csv(neuron_coords_path).to_numpy()
-synapse_filename = "../flywire/fafb_v783_princeton_synapse_table.csv"
-synapse_filename = "../flywire/banc_connections_princeton.csv"
+synapse_filename = "./data/fafb_v783_princeton_synapse_table.csv"
+# synapse_filename = "./data/banc_connections_princeton.csv"
 synapse_file = open(synapse_filename, "rb")
 print("done loading synapses")
 
@@ -117,6 +117,7 @@ while running:
         if event.type == pygame.QUIT:
             running = False
 
+    # I just realized this could be done way faster lol
     n_per_frame = 100000
     if not drawing_synapses:
         for i in range(n_per_frame):

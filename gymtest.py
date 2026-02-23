@@ -71,8 +71,10 @@ class MjcSim:
         leg_neuron_groups = {}
         if self.dataset_name == "banc":
             leg_neuron_groups = neuron_groups.banc_leg_neuron_groups
-        if self.dataset_name == "mbanc":
+        if self.dataset_name == "mbanc" or self.dataset_name == "mbanc-no-optic":
             leg_neuron_groups = neuron_groups.mbanc_leg_neuron_groups
+        else:
+            raise Exception("invalid dataset")
         muscle_to_gym_muscle = {}
 
         muscle_type_to_gym_type = {

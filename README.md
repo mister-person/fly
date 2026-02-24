@@ -1,6 +1,7 @@
 Repo for my experiments simulating fly brains. Since I keep testing different things the code isn't very well organized. 
 
 ### Installation:
+Install python 3.12.
 ```
 git clone https://github.com/mister-person/fly.git
 cd fly

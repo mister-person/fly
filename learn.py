@@ -1,8 +1,4 @@
 from collections import defaultdict
-import math
-import multiprocessing
-from queue import Queue
-import threading
 import time
 from brian2 import ms
 import pandas as pd
@@ -16,7 +12,6 @@ import neuron_groups
 import neuron_model
 from pygame_loop import PygameProcess
 import pygame_loop
-import test
 
 def run_sim(df_neu, df_con, neurons_to_activate, learned_params, neuron_sim: neuron_model.NeuronSim, mjc_sim: MjcSim, pygame_process: PygameProcess):
     # mjc_thread = threading.Thread(target=start_mjc_thread, args=(dataset, mjc_spikes_queue, frame_queue, obs_queue))
@@ -58,7 +53,7 @@ def wrapper_thing():
 
     excluded_neurons = set()
     if dataset_name == "fafb":
-        neurons_to_activate = test.neu_sugar
+        neurons_to_activate = neuron_groups.neu_sugar
     elif dataset_name == "banc":
         neurons_to_activate = [720575941626500746, 720575941491992807] #walk
         # neurons_to_activate = [720575941540215501, 720575941459097503 ] #giant fiber??

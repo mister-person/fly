@@ -1,20 +1,10 @@
-from collections import defaultdict
-import functools
 import multiprocessing
 from queue import Empty, Queue
-from sys import argv
 import time
-import typing
 import pygame
 import drawutils
-import pandas as pd
 import random
-from scipy.fft import fft
-import neuron_groups
 import data
-import test
-from functools import partial
-import pygame_loop
 
 class PygameProcess:
     def __init__(self, dataset_name, color_map):

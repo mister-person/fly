@@ -19,10 +19,11 @@ https://github.com/NeLy-EPFL/flygym.git
 
 interesting scripts:
 draw_spikes.py
-banc_syn_count.py
+draw_synapses.py
 datatest2.py
 realtime.py
 learn.py
+gymtest.py
 
 todos:
 limit angle

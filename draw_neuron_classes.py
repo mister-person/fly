@@ -113,7 +113,7 @@ configs = {
         "class_col": 2,
     },
     "mbanc": {
-        "class_arr": pd.read_feather("./data/body-annotations-male-cns-v0.9-minconf-0.5.feather")[["bodyId", "superclass"]].astype({"superclass": str}).dropna().to_numpy(),
+        "class_arr": pd.read_feather("./data/body-annotations-male-cns-v0.9-minconf-0.5.feather")[["bodyId", "superclass"]].to_numpy().astype("str"),
         "coord_arr": pd.read_feather("./data/body-annotations-male-cns-v0.9-minconf-0.5.feather")[["bodyId", "somaLocation"]].dropna().astype({"somaLocation": str}).to_numpy(),
         "class_col": 1,
     },
@@ -162,14 +162,6 @@ for dataset_name, cfg in configs.items():
 
     class_dicts[dataset_name] = class_dict
     columns[dataset_name] = class_col
-
-'''
-drawers = {"banc": drawer_banc, "fafb": drawer_fafb}
-class_dicts = {"banc": banc_class_dict, "fafb": fafb_class_dict}
-class_colors = {"banc": banc_class_colors, "fafb": fafb_class_colors}
-columns = {"banc": 10, "fafb": 2}
-class_counts = {"banc": banc_class_counts, "fafb": fafb_class_counts}
-'''
 
 while True:
     drawer: drawutils.NeuronDrawer = drawers[current_dataset]

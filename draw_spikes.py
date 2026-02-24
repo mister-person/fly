@@ -132,7 +132,6 @@ for i in range(len(target_neurons)):
         #main_surface.set_at(drawer.to_screen_coords(pos), "green")
         #'''
 
-pygame.key.set_repeat(200, 5)
 spike_count = 0
 font = pygame.font.Font(size=50)
 synapse_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -179,6 +178,7 @@ while running:
             if event.dict["key"] == pygame.K_EQUALS:
                 time_step *= 2
                 spike_drawer.time_size *= 2
+                print(time_step)
                 spike_drawer.reset_surfaces()
             if event.dict["key"] == pygame.K_SPACE:
                 paused = not paused

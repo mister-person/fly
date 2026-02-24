@@ -94,7 +94,7 @@ def start_sim(df_comp, df_con, neurons_to_activate):
             last_time = now
 
 if __name__ == "__main__":
-    dataset = "mbanc-no-optic"
+    dataset = "mbanc"
 
     if dataset == "fafb":
         config = {

@@ -7,3 +7,4 @@ __pycache__/*
 prof/*
 data/*
 rust_utils/target
+venv

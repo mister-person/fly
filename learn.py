@@ -9,7 +9,6 @@ import pandas as pd
 import numpy as np
 import jax.numpy as jnp
 import jax
-from numpy import VisibleDeprecationWarning
 
 import data
 from gymtest import MjcSim

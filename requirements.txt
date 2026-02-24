@@ -1,0 +1,8 @@
+brian2
+jax
+pandas
+-e ./flygym
+pygame-ce
+joblib
+fastparquet
+pyarrow

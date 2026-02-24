@@ -10,7 +10,6 @@ from brian2 import Hz, Network, NeuronGroup, PoissonInput, SpikeMonitor, Synapse
 import brian2
 import numpy as np
 import pandas as pd
-import Drosophila_brain_model.model as model
 import data
 from profile_dec import profile
 

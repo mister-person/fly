@@ -8,7 +8,7 @@ def profile(func):
     def profiled(*args, **kwargs):
         try:
             profiler.enable()
-            retval = func(*args, *kwargs)
+            retval = func(*args, **kwargs)
             profiler.disable()
         except Exception as e:
             profiler.disable()

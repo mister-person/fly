@@ -172,8 +172,8 @@ def load_mbanc_leg_neuron_groups(filename: str, use_cache = True):
         pickle.dump(mbanc_neuron_groups, f)
     return mbanc_neuron_groups
 
+# {string name (eg. "rh_tibia_extensor") : list(neuron id)}
 banc_leg_neuron_groups = load_banc_leg_neuron_groups("data/banc_leg_neuron_groups.pickle")
-print("banc leg neuron grousp", banc_leg_neuron_groups)
 mbanc_leg_neuron_groups = load_mbanc_leg_neuron_groups("data/mbanc_leg_neuron_groups.pickle")
 
 legs = ["lf", "rm", "lh", "rf", "lm", "rh"]

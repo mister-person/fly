@@ -6,3 +6,4 @@ pygame-ce
 joblib
 fastparquet
 pyarrow
+h5py

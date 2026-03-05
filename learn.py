@@ -1,6 +1,6 @@
 from collections import defaultdict
 import time
-from brian2 import ms
+from brian2 import mV, ms
 import pandas as pd
 import numpy as np
 import jax.numpy as jnp
@@ -8,10 +8,13 @@ import jax
 
 import data
 from gymtest import MjcSim
+import gymtest
 import neuron_groups
 import neuron_model
+from profile_dec import profile
 from pygame_loop import PygameProcess
 import pygame_loop
+import matplotlib.pyplot as plt
 
 def run_sim(df_neu, df_con, neurons_to_activate, learned_params, neuron_sim: neuron_model.NeuronSim, mjc_sim: MjcSim, pygame_process: PygameProcess):
     # mjc_thread = threading.Thread(target=start_mjc_thread, args=(dataset, mjc_spikes_queue, frame_queue, obs_queue))
@@ -46,10 +49,14 @@ def run_sim(df_neu, df_con, neurons_to_activate, learned_params, neuron_sim: neu
         spike_and_times = np.stack((times, spikes), 1, dtype=object)
         pygame_process.add_spikes((update_time, spike_and_times))
 
-    return np.array(times_acc), np.array(spikes_acc).transpose(), obs
+    voltages: np.ndarray = neuron_sim.voltages
+
+    joint_records = np.array(mjc_sim.joint_records).transpose()
+
+    return np.array(times_acc), np.array(spikes_acc).transpose(), obs, voltages, joint_records
 
 def wrapper_thing():
-    dataset_name = "mbanc"
+    dataset_name = "banc"
 
     excluded_neurons = set()
     if dataset_name == "fafb":
@@ -101,7 +108,7 @@ def wrapper_thing():
     neuron_thread.start()
     '''
 
-    runtime = 200
+    runtime = 400
     neuron_sim = neuron_model.NeuronSim(df_neu, df_con, dataset_name, neurons_to_activate, runtime=runtime * ms)
 
     mjc_sim = MjcSim(dataset_name)
@@ -110,66 +117,99 @@ def wrapper_thing():
     # best_learned_params = {"syn_weight_mods": np.random.normal(1, 1, len(df_con))}
     a = np.full(len(df_con), 1.0)
     learned_params = {"syn_weight_mods": a}
-    learned_params["neu_weight_mods"] = np.full(len(df_neu), 1.0)
+    learned_params["neu_weight_mods"] = np.full(len(df_neu), 1.3)
     # learned_params = best_learned_params.copy()
     best_reward = 0
     random_delta = np.zeros(len(df_neu))
 
-    lr = .3
+    fig, ax = plt.subplots()
+
+    walk_data, walk_data_timestep = gymtest.get_walk_data()
+
+    #pre_index, post_index
+    jnp_con = jnp.array(df_con.to_numpy()[..., [2, 3]])
+    jnp_strengths = jnp.array(df_con.to_numpy()[..., 6], dtype=jnp.float32)
+
+    lr = .01
     while True:
-        spike_times, spikes, last_obs = run_sim(df_neu, df_con, neurons_to_activate, learned_params, neuron_sim, mjc_sim, pygame_process)
+        spike_times, spikes, last_obs, voltages, joint_records = run_sim(df_neu, df_con, neurons_to_activate, learned_params, neuron_sim, mjc_sim, pygame_process)
+        print("voltages:", voltages.shape)
+
         print("number of spikes:", len(spikes))
         print("unique spikes:", len(spike_stats(spikes)))
 
-        reward = get_reward(spikes, runtime, excluded_neurons=neurons_to_activate, dataset_name= dataset_name)
-        # print("learned weights", learned_params["syn_weight_mods"])
+        joint_diff = get_joint_diff(walk_data, walk_data_timestep, joint_records, mjc_sim.timestep)
+        rewards = get_reward_from_joint_diff(joint_diff, mjc_sim.timestep, dataset_name)
+
+        for reward, time in rewards:
+            v_weights = weight_by_time_and_voltage(voltages, time)
+            gradient, neu_gradient = get_gradient(df_neu, jnp_con, jnp_strengths, learned_params, neurons_to_activate, neurons_to_push=reward, neu_weight_mods=v_weights)
+            learned_params["syn_weight_mods"] = (learned_params["syn_weight_mods"] + np.array(gradient) * .1 * lr).clip(.5, 4)
+            learned_params["neu_weight_mods"] = (learned_params["neu_weight_mods"] + np.array(neu_gradient) * 1 * lr).clip(.2, 10)
 
         # pygame_spike_queue.put(None)
         # pygame_spike_queue.put((spikes[-1][0], spikes))
 
-        gradient, neu_gradient = get_gradient(df_neu, df_con, learned_params, neurons_to_activate, neurons_to_push=reward)
-
+        reward = get_reward(spikes, runtime, excluded_neurons=neurons_to_activate, dataset_name= dataset_name)
+        gradient, neu_gradient = get_gradient(df_neu, jnp_con, jnp_strengths, learned_params, neurons_to_activate, neurons_to_push=reward)
         #TODO some sort of penalty for being further from the data besides just clamping it
-        learned_params["syn_weight_mods"] = (learned_params["syn_weight_mods"] + np.array(gradient) * .1 * lr).clip(.2, 4)
-        learned_params["neu_weight_mods"] = (learned_params["neu_weight_mods"] + np.array(neu_gradient) * 1 * lr).clip(.1, 30)
-        # print("supposed gradient", np.sort(gradient))
-        print("learned weights syn", np.sort(learned_params["syn_weight_mods"]))
-        print("learned weights neu", np.sort(learned_params["neu_weight_mods"]))
+        lr2 = lr*12
+        learned_params["syn_weight_mods"] = (learned_params["syn_weight_mods"] + np.array(gradient) * .1 * lr2).clip(.2, 4)
+        learned_params["neu_weight_mods"] = (learned_params["neu_weight_mods"] + np.array(neu_gradient) * 1 * lr2).clip(.1, 30)
 
-        lr = .3
+        print("gradients", gradient, neu_gradient)
+
+        # reward_time1, reward_time2 = get_reward_at_time(spikes, spike_times, voltages, runtime, excluded_neurons=neurons_to_activate, dataset_name= dataset_name)
+
+        # v_weights = weight_by_time_and_voltage(voltages, .05)
+        # neurons_to_push = {x[1]: 2.6 for x in neuron_groups.mbanc_by_leg["rf"]}
+        # neurons_to_push = reward_time1
+        # v_gradient, v_neu_gradient = get_gradient(df_neu, df_con, learned_params, neurons_to_activate, neurons_to_push, neu_weight_mods = v_weights)
+
+        # v_weights = weight_by_time_and_voltage(voltages, .1)
+        # neurons_to_push = {x[1]: -.6 for x in neuron_groups.mbanc_by_leg["rf"]}
+        # neurons_to_push = reward_time2
+        # v_gradient_2, v_neu_gradient_2 = get_gradient(df_neu, df_con, learned_params, neurons_to_activate, neurons_to_push, neu_weight_mods = v_weights)
+
+        # learned_params["syn_weight_mods"] = (learned_params["syn_weight_mods"] + np.array(v_gradient + v_gradient_2) * .1 * lr).clip(.2, 4)
+        # learned_params["neu_weight_mods"] = (learned_params["neu_weight_mods"] + np.array(v_neu_gradient + v_neu_gradient_2) * 1 * lr).clip(.1, 30)
+
+        # print("supposed gradient", np.sort(gradient))
+        # print("learned weights syn", np.sort(learned_params["syn_weight_mods"]))
+        # print("learned weights neu", np.sort(learned_params["neu_weight_mods"]))
 
 def jprint(x):
     # jax.debug.print(str(x))
     pass
 
-def get_gradient(df_neu, df_con: pd.DataFrame, learned_params, neurons_to_activate, neurons_to_push):
+@profile
+def get_gradient(df_neu, jnp_con, jnp_strengths, learned_params, neurons_to_activate, neurons_to_push, neu_weight_mods = None):
     flyid2i = {j: i for i, j in enumerate(df_neu.index)}  # flywire id: brian ID
     # i2flyid = {j: i for i, j in flyid2i.items()} # brian ID: flywire ID
 
     neurons_to_activate = jnp.array([flyid2i[x] for x in neurons_to_activate], dtype=jnp.int32)
     neurons_to_push_in = neurons_to_push
     neurons_to_push = jnp.array([flyid2i[nid] for nid in neurons_to_push_in.keys()], dtype=jnp.int32)
-    neuron_weights = jnp.array([weight for weight in neurons_to_push_in.values()])
-
-    #pre_index, post_index
-    jnp_con = jnp.array(df_con.to_numpy()[..., [2, 3]])
-    jnp_strengths = jnp.array(df_con.to_numpy()[..., 6], dtype=jnp.float32)
+    neurons_to_push_weights = jnp.array([weight for weight in neurons_to_push_in.values()])
 
     # all_neurons = forward(jnp_con, jnp_strengths, neurons_to_activate)
 
     learned_syn_weights = learned_params["syn_weight_mods"] 
     learned_neu_weights = learned_params["neu_weight_mods"]
 
-    start = time.monotonic()
-    gradient, neu_gradient = jit_grad_loss(jnp_con, jnp_strengths, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neuron_weights) 
-    end = time.monotonic()
+    if neu_weight_mods is None:
+        neu_weight_mods = jnp.full(len(df_neu), 1)
 
-    print("jax took", end - start, "seconds")
-    print("gradient", gradient.sort(), neu_gradient.sort())
+    # start = time.monotonic()
+    gradient, neu_gradient = jit_grad_loss(jnp_con, jnp_strengths, neu_weight_mods, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights) 
+    # end = time.monotonic()
+    # print("jax took", end - start, "seconds")
+    # print("gradient", gradient.sort(), neu_gradient.sort())
+    print("jaxing")
 
     return gradient, neu_gradient
 
-def forward(jnp_con, start_synapse_weights, learned_syn_weights, learned_neu_weights, neurons_to_activate):
+def forward(jnp_con, start_synapse_weights, neu_weights, learned_syn_weights, learned_neu_weights, neurons_to_activate):
     # global_connection_strength = .001
 
     all_neurons = jnp.zeros(len(learned_neu_weights))
@@ -200,14 +240,14 @@ def forward(jnp_con, start_synapse_weights, learned_syn_weights, learned_neu_wei
 
     return all_neurons
 
-def loss(jnp_con, jnp_strengths, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights):
-    new_neuron_values = forward(jnp_con, jnp_strengths, learned_syn_weights, learned_neu_weights, neurons_to_activate)
+def loss(jnp_con, jnp_strengths, neuron_weights, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights):
+    new_neuron_values = forward(jnp_con, jnp_strengths, neuron_weights, learned_syn_weights, learned_neu_weights, neurons_to_activate)
 
     return jax.numpy.sum(neurons_to_push_weights * new_neuron_values[neurons_to_push])
 
-jit_grad_loss = jax.jit(jax.grad(loss, argnums=(2, 3)))
+jit_grad_loss = jax.jit(jax.grad(loss, argnums=(3, 4)))
 
-def get_reward(spikes, runtime, excluded_neurons, dataset_name):
+def get_leg_neurons(dataset_name):
     all_leg_neurons = set()
     # groups = neuron_groups.mbanc_leg_neuron_groups
     # for neurons in groups.values():
@@ -222,6 +262,127 @@ def get_reward(spikes, runtime, excluded_neurons, dataset_name):
         neurons_by_leg = neuron_groups.banc_by_leg
     else:
         raise Exception("invalid dataset")
+    return all_leg_neurons, neurons_by_leg
+
+def weight_by_time_and_voltage(voltages, time):
+    # TODO maybe look back a bit for previous voltages bc if it just spiked it shouldn't count as 0 ... idk (did this)
+    # maybe it should be recent spikes and not voltages at all?
+
+    samples_per_second = 1000
+    sample = int(time * samples_per_second)
+    start_sample = int((time - .02) * samples_per_second)
+    print("sample at", start_sample, sample)
+    weight = np.average(voltages[:, start_sample:sample] / mV, axis=1)
+    weight = 10 ** (weight / 7) 
+    return weight
+
+def get_joint_diff(walk_data, walk_data_timestep, joint_records, mjc_timestep):
+    print("joint records", joint_records.shape, joint_records)
+    print("walk data", walk_data)
+    mjc_times = np.arange(joint_records.shape[1]) * mjc_timestep
+    walk_data_times = np.arange(walk_data.shape[1]) * walk_data_timestep
+    result = np.zeros_like(joint_records)
+    plt.ion()
+    plt.clf()
+    plt.show()
+    for i, record in enumerate(joint_records):
+        result[i] = record - np.interp(mjc_times, walk_data_times, walk_data[i])
+
+        plt.subplot(7, 7, i + 1)
+        plt.plot(mjc_times, joint_records[i], color="black")
+        plt.plot(walk_data_times, walk_data[i], color="green")
+        plt.plot(mjc_times, result[i], color="blue")
+
+    print("result", result)
+
+    plt.pause(.1)
+    plt.draw()
+    
+    return result
+
+def get_reward_from_joint_diff(joint_diff, mjc_timestep, dataset_name):
+    if dataset_name == "banc":
+        leg_neuron_groups = neuron_groups.banc_leg_neuron_groups
+    elif dataset_name == "mbanc" or dataset_name == "mbanc-no-optic":
+        leg_neuron_groups = neuron_groups.mbanc_leg_neuron_groups
+    else:
+        raise Exception("invalid dataset")
+
+    # TODO consolidate these functions
+    index_to_neuron = gymtest.get_muscle_index_to_neuron(gymtest.get_neuron_to_muscle_index(leg_neuron_groups, gymtest.get_muscle_to_gym_muscle_index(leg_neuron_groups)))
+    print("itn", index_to_neuron)
+
+    rewards = []
+
+    num_seconds = .4
+    per_second = 100
+
+    plot = np.zeros((joint_diff.shape[0], int(num_seconds * per_second)))
+    for i in range(int(num_seconds * per_second)):
+        time = i / per_second
+        diffs = np.zeros(joint_diff.shape[0])
+        reward = {}
+        for joint_i in range(joint_diff.shape[0]):
+            mjc_times = np.arange(joint_diff.shape[1]) * mjc_timestep
+            diff = np.interp(time, mjc_times, joint_diff[joint_i])
+            diffs[joint_i] = diff
+
+            plot[joint_i, i] = diff
+            neurons = index_to_neuron[joint_i]
+            for neuron, strength in neurons:
+                if strength * diff > 0:
+                    lr = 1
+                else: 
+                    lr = .5
+                reward[neuron] = strength * diff * lr
+                print(joint_i, time, neuron, reward[neuron] if neuron in reward else "not in reward")
+            if len(neurons) > 0:
+                pass
+                # break
+
+        rewards.append((reward, time))
+
+    # plt.figure(2)
+    # plt.plot(plot[3])
+    # plt.show()
+
+    print("in reward from joint diff", index_to_neuron, joint_diff)
+
+    return rewards
+
+def get_reward_at_time(spikes, spike_times, voltages, runtime, excluded_neurons, dataset_name, time = .1):
+    all_leg_neurons, neurons_by_leg = get_leg_neurons(dataset_name)
+    
+    spike1 = {neuron[1]: 0 for neuron in neurons_by_leg["rf"]}
+    spike2 = {neuron[1]: 0 for neuron in neurons_by_leg["rf"]}
+    for i, spike_id in enumerate(spikes):
+        time = spike_times[i]
+        # print(i, spike_id, time, list(spike1.keys())[0])
+        if spike_id in spike1 or spike_id in spike2:
+            # print("spike", spike_id)
+            if time > 0 and time < .1:
+                spike1[spike_id] += 1
+            if time > .1 and time < .15:
+                spike2[spike_id] += 1
+
+    average1 = sum(spike1.values()) / len(spike1)
+    target1 = 0
+    res1 = {}
+    for spike_id in spike1.keys():
+        res1[spike_id] = target1 - average1
+
+    average2 = sum(spike2.values()) / len(spike2)
+    target2 = 2 * (runtime / 1000)
+    res2 = {}
+    for spike_id in spike2.keys():
+        res2[spike_id] = target2 - average2
+
+    print("timed reward values:", target1 - average1, target2 - average2)
+
+    return res1, res2
+
+def get_reward(spikes, runtime, excluded_neurons, dataset_name):
+    all_leg_neurons, neurons_by_leg = get_leg_neurons(dataset_name)
 
     '''
     _, synapse_map, rev_synapse_map = data.get_synapse_map("mbanc")
@@ -241,40 +402,37 @@ def get_reward(spikes, runtime, excluded_neurons, dataset_name):
         if spike_id in all_leg_neurons:
             counter[spike_id] += 1
         elif spike_id not in excluded_neurons:
-            print("spike id plz int?", spike_id, type(spike_id))
             other_counter[spike_id] += 1
         for leg in neuron_groups.legs:
             if spike_id in leg_counters[leg].keys():
                 leg_counters[leg][spike_id] += 1
             
     # result = {key: (13 - value)**2 * (1 if (13-value) > 0 else -1) for key, value in counter.items()} 
-    # result = {key: (13 * (runtime / 1000) - value) for key, value in counter.items()} 
-    # result.update({key: -0.01 * value for key, value in other_counter.items()})
+    result = {key: (5 * (runtime / 1000) - value) for key, value in counter.items()} 
+    for n in result:
+        if counter[n] < 5 and counter[n] > 1:
+            result[n] = 0
+    result.update({key: -0.01 * value for key, value in other_counter.items()})
 
     # maybe averaging them will do something?
     # average = sum(result.values()) / len(result)
     # for key in result.keys():
         # result[key] = average
 
-    result = {}
-    for leg in leg_counters.keys():
-        leg_counters[leg]
-        average = sum(leg_counters[leg].values()) / len(leg_counters[leg])
-        target = 13 * (runtime / 1000)
-        for key in leg_counters[leg].keys():
-            result[key] = target - average
-            print("fsdff", key, type(key))
+    # result = {}
+    # for leg in leg_counters.keys():
+        # leg_counters[leg]
+        # average = sum(leg_counters[leg].values()) / len(leg_counters[leg])
+        # target = 8 * (runtime / 1000)
+        # for key in leg_counters[leg].keys():
+            # result[key] = target - average
 
     print(list(map(lambda f: f"{f}, {type(f)}", other_counter.keys())))
-    max_other_neurons = 6
-    result.update({key: -1 * (value - max_other_neurons) if value > max_other_neurons else 0 for key, value in other_counter.items()})
+    # max_other_neurons = 6
+    # result.update({key: -1 * (value - max_other_neurons) if value > max_other_neurons else 0 for key, value in other_counter.items()})
 
     # result = {key: 100 for key, value in counter.items()} 
 
-    print(result)
-    print(list(map(lambda f: f"{f}, {type(f)}", result.keys())))
-
-    print("SCORE!!!", sum(result.values()) + (100 - len(result)) * 13)
     return result
     # return sum([math.sqrt(x) for x in counter.values()])
 

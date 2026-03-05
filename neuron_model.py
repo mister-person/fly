@@ -6,7 +6,7 @@ import sys
 from threading import Condition
 import threading
 from time import sleep
-from brian2 import Hz, Network, NeuronGroup, PoissonInput, SpikeMonitor, Synapses, mV, ms, network_operation
+from brian2 import Hz, Network, NeuronGroup, PoissonInput, SpikeMonitor, StateMonitor, Synapses, mV, ms, network_operation
 import brian2
 import numpy as np
 import pandas as pd
@@ -18,233 +18,253 @@ class NeuronSim:
         pass
         self.spike_queue = Queue()
         self.input_queue = Queue()
-        self.brian_control_queue = Queue()
+        self.control_queue = Queue()
+        self.voltages = np.ndarray([])
         neuron_thread = threading.Thread(
-            target=start_neuron_sim, 
-            args=(df_neu, df_con, dataset_name, neurons_to_activate, self.brian_control_queue, self.spike_queue, self.input_queue),
+            target=self.start_neuron_sim, 
+            args=(df_neu, df_con, dataset_name, neurons_to_activate),
             kwargs={"runtime": runtime}
         )
         neuron_thread.start()
 
     def start(self, params):
-        self.brian_control_queue.put(("start", params))
+        self.control_queue.put(("start", params))
 
-def start_neuron_sim(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue: queue.Queue, runtime=100_000 * ms):
-    start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue, runtime)
+    def get_voltages(self):
+        return self.voltages
 
-@profile
-def start_neuron_sim_do(df_comp, df_con, dataset, neurons_to_activate, control_queue, spike_queue, input_queue: queue.Queue, runtime=100_000 * ms):
-    print("started neuron sim")
-    # load name/id mappings
-    flyid2i = {j: i for i, j in enumerate(df_comp.index)}  # flywire id: brian ID
-    i2flyid = {j: i for i, j in flyid2i.items()} # brian ID: flywire ID
+    def start_neuron_sim(self, df_neu, df_con, dataset_name, neurons_to_activate, runtime=100_000 * ms):
+        self.start_neuron_sim_do(df_neu, df_con, dataset_name, neurons_to_activate, runtime)
 
-    i2flyid_np = np.vectorize(i2flyid.get, otypes=[np.integer])
+    # @profile
+    def start_neuron_sim_do(self, df_neu, df_con, dataset_name, neurons_to_activate, runtime=100_000 * ms):
+        print("started neuron sim, duration", runtime)
+        # load name/id mappings
+        flyid2i = {j: i for i, j in enumerate(df_neu.index)}  # flywire id: brian ID
+        i2flyid = {j: i for i, j in flyid2i.items()} # brian ID: flywire ID
 
-    v_0 = -52 * mV               # resting potential
-    v_rst = -52 * mV               # reset potential after spike
-    v_th = -45 * mV               # threshold for spiking
-    t_mbr =  20 * ms               # membrane time scale (capacitance * resistance = .002 * uF * 10. * Mohm)
-    tau = 5 * ms                 # time constant 
+        i2flyid_np = np.vectorize(i2flyid.get, otypes=[np.integer])
 
-    # params = model.default_params
-    synapse_weight = .1 * mV
-    poisson_rate = 250 * Hz
-    model_eqs = ''' 
-    dv/dt = (v_0 - v + g) / t_mbr : volt (unless refractory)
-    dg/dt = -g / tau               : volt (unless refractory) 
-    rfc                            : second
-    p_weight                       : volt
-    input                          : Hz
-    '''
-    threshold_eq = 'v > v_th or (t - lastspike) * input > 1'
-    t_dly = 3.6 * ms
-    reset_eq = 'v = v_rst; w = 0; g = 0 * mV'
-    refractory_period = 2.2 * ms
+        v_0 = 0 * mV               # resting potential
+        v_rst = 0 * mV               # reset potential after spike
+        v_th = 7 * mV               # threshold for spiking
+        t_mbr =  20 * ms               # membrane time scale (capacitance * resistance = .002 * uF * 10. * Mohm)
+        tau = 5 * ms                 # time constant 
 
-    # model.run_trial([flyid2i[flyid] for flyid in test.neu_sugar], [], [], path_comp, path_con, params)
+        # params = model.default_params
+        synapse_weight = .1 * mV
+        poisson_rate = 250 * Hz
+        model_eqs = ''' 
+        dv/dt = (v_0 - v + g) / t_mbr : volt (unless refractory)
+        dg/dt = -g / tau               : volt (unless refractory) 
+        rfc                            : second
+        p_weight                       : volt
+        input                          : Hz
+        '''
+        threshold_eq = 'v > v_th or (t - lastspike) * input > 1'
+        t_dly = 3.6 * ms
+        reset_eq = 'v = v_rst; w = 0; g = 0 * mV'
+        refractory_period = 2.2 * ms
 
-    # neu, syn, spk_mon = model.create_model(df_comp, df_con, params)
+        # model.run_trial([flyid2i[flyid] for flyid in test.neu_sugar], [], [], path_comp, path_con, params)
 
-    neurons_indexes = [flyid2i[flyid] for flyid in neurons_to_activate]
+        # neu, syn, spk_mon = model.create_model(df_comp, df_con, params)
 
-    neu = NeuronGroup( # create neurons
-        N = len(df_comp),
-        model = model_eqs,
-        method = 'linear',
-        threshold = threshold_eq,
-        reset = reset_eq,
-        refractory = 'rfc',
-        name = 'default_neurons',
-        # namespace = params,
-    )
+        neurons_indexes = [flyid2i[flyid] for flyid in neurons_to_activate]
 
-    syn = Synapses(neu, neu, 'w : volt', on_pre='g += w', delay=t_dly, name='default_synapses')
-    i_pre = df_con.loc[:, 'Presynaptic_Index'].values
-    i_post = df_con.loc[:, 'Postsynaptic_Index'].values
+        neu = NeuronGroup( # create neurons
+            N = len(df_neu),
+            model = model_eqs,
+            method = 'linear',
+            threshold = threshold_eq,
+            reset = reset_eq,
+            refractory = 'rfc',
+            name = 'default_neurons',
+            # namespace = params,
+        )
 
-    '''
-    print("filtered syns", np.where((i_pre == neurons_indexes[0]) & (i_pre == neurons_indexes[1])))
-    print("filtered syns", i_pre == neurons_indexes[0])
-    print(np.where(i_pre == neurons_indexes[0])[0].shape)
-    filtered = np.where((i_pre == neurons_indexes[0]) | (i_pre == neurons_indexes[1]))[0]
-    filtered = np.where((i_pre == neurons_indexes[0]))[0]
-    i_pre = i_pre[filtered]
-    i_post = i_post[filtered]
-    '''
+        syn = Synapses(neu, neu, 'w : volt', on_pre='g += w', delay=t_dly, name='default_synapses')
+        i_pre = df_con.loc[:, 'Presynaptic_Index'].values
+        i_post = df_con.loc[:, 'Postsynaptic_Index'].values
 
-    syn.connect(i=i_pre, j=i_post)
+        '''
+        print("filtered syns", np.where((i_pre == neurons_indexes[0]) & (i_pre == neurons_indexes[1])))
+        print("filtered syns", i_pre == neurons_indexes[0])
+        print(np.where(i_pre == neurons_indexes[0])[0].shape)
+        filtered = np.where((i_pre == neurons_indexes[0]) | (i_pre == neurons_indexes[1]))[0]
+        filtered = np.where((i_pre == neurons_indexes[0]))[0]
+        i_pre = i_pre[filtered]
+        i_post = i_post[filtered]
+        '''
 
-    '''
-    syn.w = df_con.loc[:,'Excitatory x Connectivity'].values[filtered] * synapse_weight * 2
-    with np.printoptions(threshold=sys.maxsize):
-        print("weights from first neuron", np.stack((i2flyid_np(i_post), df_con.loc[:,'Excitatory x Connectivity'].values[filtered]), 1))
-    '''
+        syn.connect(i=i_pre, j=i_post)
 
-    spk_mon = SpikeMonitor(neu) 
+        '''
+        syn.w = df_con.loc[:,'Excitatory x Connectivity'].values[filtered] * synapse_weight * 2
+        with np.printoptions(threshold=sys.maxsize):
+            print("weights from first neuron", np.stack((i2flyid_np(i_post), df_con.loc[:,'Excitatory x Connectivity'].values[filtered]), 1))
+        '''
 
-    _, synapse_map, reverse_synapse_map = data.get_synapse_map(dataset)
+        spk_mon = SpikeMonitor(neu) 
 
-    # poi_inp, neu = model.poi(neu, neurons_i, [], params)
-    pois = []
-    for i in neurons_indexes:
-        print("creating poi for", i2flyid[i])
-        p = PoissonInput(
-            target=neu[i], 
-            target_var='v', 
-            N=1, 
-            rate=poisson_rate ,
-            weight="p_weight"
-            # weight=params['w_syn']*params['f_poi'],
-            # weight = 68.75 * mV
-            )
-        neu[i].rfc = 0 * ms # no refractory period for Poisson targets
-        pois.append(p)
+        voltage_monitor = StateMonitor(neu, "v", True, dt=1 * ms)
 
-    poi_inp = pois
+        _, synapse_map, reverse_synapse_map = data.get_synapse_map(dataset_name)
 
-    STATE_POI = 1
-    STATE_RATE = 2
+        # poi_inp, neu = model.poi(neu, neurons_i, [], params)
+        pois = []
+        for i in neurons_indexes:
+            print("creating poi for", i2flyid[i])
+            p = PoissonInput(
+                target=neu[i], 
+                target_var='v', 
+                N=1, 
+                rate=poisson_rate ,
+                weight="p_weight"
+                # weight=params['w_syn']*params['f_poi'],
+                # weight = 68.75 * mV
+                )
+            neu[i].rfc = 0 * ms # no refractory period for Poisson targets
+            pois.append(p)
 
-    @dataclass
-    class State:
-        state: int
-        _rate: int
-        @property
-        def rate(self):
-            return self._rate * Hz
+        poi_inp = pois
 
-    control_states: list[State] = [State(STATE_POI, 250)]
-    neu.input[neurons_indexes] = 100 * Hz
+        STATE_POI = 1
+        STATE_RATE = 2
 
-    # spikes_processed = 0
-    last_spike_index = 0
+        @dataclass
+        class State:
+            state: int
+            _rate: int
+            @property
+            def rate(self):
+                return self._rate * Hz
 
-    @network_operation() # type: ignore
-    def fast_update(time):
-        nonlocal last_spike_index
-        # nonlocal spikes_processed
-        spikes = spk_mon.i[last_spike_index:]
+        control_states: list[State] = [State(STATE_POI, 250)]
+        neu.input[neurons_indexes] = 100 * Hz
 
-        spike_queue.put((time[:] / brian2.second, i2flyid_np(spikes)))
-        last_spike_index = len(spk_mon.i)
-        input_queue.get()
+        # spikes_processed = 0
+        last_spike_index = 0
 
-    last_time = 0
+        net_start_time = 0
 
-    started = False
+        @network_operation() # type: ignore
+        def fast_update(time):
+            nonlocal last_spike_index
+            # nonlocal spikes_processed
+            spikes = spk_mon.i[last_spike_index:]
 
-    @network_operation(dt=16.6666*ms) # type: ignore 
-    # @network_operation(dt=1*ms) # type: ignore 
-    def update(time):
-        nonlocal last_time
-        nonlocal started
-        # print(len(spk_mon.i), spikes_processed)
+            self.spike_queue.put(((time[:] - net_start_time) / brian2.second, i2flyid_np(spikes)))
+            last_spike_index = len(spk_mon.i)
+            self.input_queue.get()
 
-        if not started:
-            print("started!")
-            started = True
-        # volt_array = neu.v
-        # dif = np.where(volt_array != -52 * mV)
-        # if len(dif) > 0:
-            # print(dif)
-        # print(np.sum(spk_mon.count)) # type: ignore
-        # print(spk_mon.i[-10:])
-        # print(spk_mon.t[-10:])
-        # index = np.searchsorted(spk_mon.t, last_time)
-        # spike_indices = spk_mon.i[index:]
-        # spike_times = spk_mon.t[index:]
-        # if len(spike_indices) > 0:
-            # points = np.stack((spike_times, i2flyid_np(spike_indices)), 1, dtype=object)
-            # spike_queue.put((time[:] / brian2.second, points))
-        # else:
-            # spike_queue.put((time[:] / brian2.second, []))
+        last_time = 0
 
-        print(np.sort(neu.v))
+        started = False
 
-        paused = False
-        while True:
-            try:
-                while event := control_queue.get_nowait():
-                    if event[0] == "start":
-                        print("how the fuck")
-                    if event[0] == "group1":
-                        if event[1]:
-                            if control_states[0].state == STATE_POI:
-                                neu.p_weight[neurons_indexes] = 65 * mV
-                                neu.input[neurons_indexes] = 0 * Hz
-                            elif control_states[0].state == STATE_RATE:
+        @network_operation(dt=16.6666*ms) # type: ignore 
+        # @network_operation(dt=1*ms) # type: ignore 
+        def update(time):
+            nonlocal last_time
+            nonlocal started
+            # print(len(spk_mon.i), spikes_processed)
+
+            if not started:
+                print("started!")
+                started = True
+            # volt_array = neu.v
+            # dif = np.where(volt_array != 0 * mV)
+            # if len(dif) > 0:
+                # print(dif)
+            # print(np.sum(spk_mon.count)) # type: ignore
+            # print(spk_mon.i[-10:])
+            # print(spk_mon.t[-10:])
+            # index = np.searchsorted(spk_mon.t, last_time)
+            # spike_indices = spk_mon.i[index:]
+            # spike_times = spk_mon.t[index:]
+            # if len(spike_indices) > 0:
+                # points = np.stack((spike_times, i2flyid_np(spike_indices)), 1, dtype=object)
+                # self.spike_queue.put((time[:] / brian2.second, points))
+            # else:
+                # self.spike_queue.put((time[:] / brian2.second, []))
+
+            paused = False
+            while True:
+                try:
+                    while event := self.control_queue.get_nowait():
+                        if event[0] == "start":
+                            print("how the fuck")
+                        if event[0] == "group1":
+                            if event[1]:
+                                if control_states[0].state == STATE_POI:
+                                    neu.p_weight[neurons_indexes] = 65 * mV
+                                    neu.input[neurons_indexes] = 0 * Hz
+                                elif control_states[0].state == STATE_RATE:
+                                    neu.p_weight[neurons_indexes] = 0 * mV
+                                    neu.input[neurons_indexes] = control_states[0].rate
+                                print("input on")
+                            else:
                                 neu.p_weight[neurons_indexes] = 0 * mV
-                                neu.input[neurons_indexes] = control_states[0].rate
-                            print("input on")
-                        else:
+                                neu.input[neurons_indexes] = 0 * Hz
+                                print("input off")
+                        elif event[0] == "pause":
+                            paused = event[1]
+                        elif event[0] == "rate1":
+                            # neu.input[neurons_indexes] = event[2]
+                            control_states[0]._rate = event[1]
+                            control_states[0].state = STATE_RATE
+
                             neu.p_weight[neurons_indexes] = 0 * mV
-                            neu.input[neurons_indexes] = 0 * Hz
-                            print("input off")
-                    elif event[0] == "pause":
-                        paused = event[1]
-                    elif event[0] == "rate1":
-                        # neu.input[neurons_indexes] = event[2]
-                        control_states[0]._rate = event[1]
-                        control_states[0].state = STATE_RATE
+                            neu.input[neurons_indexes] = control_states[0].rate
+                        else:
+                            print(f"received event {event[0]} with value {event[1]}")
+                except Empty:
+                    pass
 
-                        neu.p_weight[neurons_indexes] = 0 * mV
-                        neu.input[neurons_indexes] = control_states[0].rate
-                    else:
-                        print(f"received event {event[0]} with value {event[1]}")
-            except Empty:
-                pass
-
-            if not paused:
-                break
-            else:
-                sleep(.05)
-
-        last_time = time[:]
-
-    net = Network(neu, syn, spk_mon, *poi_inp, update, fast_update)
-
-    while True:
-        while True:
-            event = control_queue.get()
-            if event[0] == "start":
-                learned_params = event[1]
-                syn_weight_mods = 1 if "syn_weight_mods" not in learned_params else learned_params["syn_weight_mods"]
-
-                if "neu_weight_mods" in learned_params:
-                    neu_weight_mods = learned_params["neu_weight_mods"]
-                    neu_weights_by_syn = neu_weight_mods[df_con.loc[:,'Presynaptic_Index']]
+                if not paused:
+                    break
                 else:
-                    neu_weights_by_syn = 1
+                    sleep(.05)
 
-                syn.w = df_con.loc[:,'Excitatory x Connectivity'].values * syn_weight_mods * synapse_weight * neu_weights_by_syn
-                print(syn.w)
-                neu.v = v_0
-                neu.g = 0
-                neu.rfc = refractory_period
-                break
+            last_time = time[:]
 
-        # run simulation
-        net.run(duration=runtime)
+        net = Network(neu, syn, spk_mon, voltage_monitor, *poi_inp, update, fast_update)
 
-        spike_queue.put(None)
+        while True:
+            while True:
+                event = self.control_queue.get()
+                if event[0] == "start":
+                    learned_params = event[1]
+                    syn_weight_mods = 1 if "syn_weight_mods" not in learned_params else learned_params["syn_weight_mods"]
+
+                    if "neu_weight_mods" in learned_params:
+                        neu_weight_mods = learned_params["neu_weight_mods"]
+                        neu_weights_by_syn = neu_weight_mods[df_con.loc[:,'Presynaptic_Index']]
+                    else:
+                        neu_weights_by_syn = 1
+
+                    syn.w = df_con.loc[:,'Excitatory x Connectivity'].values * syn_weight_mods * synapse_weight * neu_weights_by_syn
+                    # print(syn.w)
+                    neu.v = v_0
+                    neu.g = 0
+                    neu.rfc = refractory_period
+                    break
+
+            # run simulation
+            net_start_time = net.t
+            print("net start time", net_start_time)
+
+            net.run(duration=runtime)
+
+            self.voltages = voltage_monitor.v
+            self.spike_queue.put(None)
+
+            net.remove(voltage_monitor)
+            del voltage_monitor
+            voltage_monitor = StateMonitor(neu, "v", True, dt=1 * ms)
+            net.add(voltage_monitor)
+
+            net.remove(spk_mon)
+            del spk_mon
+            spk_mon = SpikeMonitor(neu) 
+            net.add(spk_mon)

@@ -2,7 +2,7 @@ from multiprocessing import Queue
 from queue import Empty
 from threading import Condition
 
-def pygame_thread(frame_queue: Queue, frame_ready: Condition, event_queue: Queue, size: tuple[int, int]):
+def pygame_thread(frame_queue: Queue, event_queue: Queue, size: tuple[int, int]):
     FRAME_WIDTH, FRAME_HEIGHT = size
     # pygame setup
     import pygame

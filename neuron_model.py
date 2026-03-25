@@ -6,7 +6,7 @@ import sys
 from threading import Condition
 import threading
 from time import sleep
-from brian2 import Hz, Network, NeuronGroup, PoissonInput, SpikeMonitor, StateMonitor, Synapses, mV, ms, network_operation
+from brian2 import Hz, Network, NeuronGroup, PoissonInput, SpikeMonitor, StateMonitor, Synapses, mV, ms, network_operation, run
 import brian2
 import numpy as np
 import pandas as pd
@@ -15,7 +15,6 @@ from profile_dec import profile
 
 class NeuronSim:
     def __init__(self, df_neu, df_con, dataset_name, neurons_to_activate, runtime = 1000 * ms) -> None:
-        pass
         self.spike_queue = Queue()
         self.input_queue = Queue()
         self.control_queue = Queue()
@@ -62,7 +61,7 @@ class NeuronSim:
         input                          : Hz
         '''
         threshold_eq = 'v > v_th or (t - lastspike) * input > 1'
-        t_dly = 3.6 * ms
+        t_dly = 1.8 * ms
         reset_eq = 'v = v_rst; w = 0; g = 0 * mV'
         refractory_period = 2.2 * ms
 
@@ -229,11 +228,13 @@ class NeuronSim:
             last_time = time[:]
 
         net = Network(neu, syn, spk_mon, voltage_monitor, *poi_inp, update, fast_update)
+        net.store()
 
         while True:
             while True:
                 event = self.control_queue.get()
                 if event[0] == "start":
+                    net.restore()
                     learned_params = event[1]
                     syn_weight_mods = 1 if "syn_weight_mods" not in learned_params else learned_params["syn_weight_mods"]
 
@@ -258,13 +259,3 @@ class NeuronSim:
 
             self.voltages = voltage_monitor.v
             self.spike_queue.put(None)
-
-            net.remove(voltage_monitor)
-            del voltage_monitor
-            voltage_monitor = StateMonitor(neu, "v", True, dt=1 * ms)
-            net.add(voltage_monitor)
-
-            net.remove(spk_mon)
-            del spk_mon
-            spk_mon = SpikeMonitor(neu) 
-            net.add(spk_mon)

@@ -25,20 +25,34 @@ realtime.py
 learn.py
 gymtest.py
 
-todos:
-use the walking data that will just work
-limit angle
-mess with starting pose more? should be more ?flat?
-tarsii
-force?
-save params?
-maybe inhibitory synapses need a different equation bc they pull toward so close to the resting voltage
-use the walking data that will just work
+big todos:
+tweak fake learn more, make it good
+tweak brian model more, non spiking neurons??
+tweak mjc model, maybe that muscle paper?
+jaxley??
+read more papers and books
 
-normal ideas:
+mjc ideas:
+muscle paper
+limit angle
+mess with starting pose more? more flat now, maybe tweak even more
+force?
+
+brian ideas:
+non spiking neurons
+maybe inhibitory synapses need a different equation bc they pull toward so close to the resting voltage
+moar parameters? foar parameters?
+use the walking data that will just work (no)
+tarsii
+
+misc ideas:
 what if in the spike drawer it drew lines between spikes and the spikes they caused
+multiple spikes per pixel
+have a way save params between runs
+color based on brain region
 
 learn ideas:
+figure out parameters of fake nn so it matches spiking nn in terms of which neurons actually fire
 group by limb for spike count targeting
 problem where exploding weights prioritize exactly length 5 routes to the neurons
 figure out how to penalize too many spikes from too many neurons

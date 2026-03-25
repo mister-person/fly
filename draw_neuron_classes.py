@@ -207,7 +207,6 @@ while True:
         m = 255 - max(r, g, b)
         screen.blit(font.render(c + " " + str(class_count[c]), True, (r + m, g + m, b + m)), (0, 25*i))
 
-
     screen.blit(font.render(f"{clock.get_fps():.0f} fps", True, "blue"), (0, HEIGHT-50))
     pygame.display.flip()
 

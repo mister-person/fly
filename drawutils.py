@@ -109,6 +109,7 @@ class SpikeDrawer():
         self.neurons = []
         self.width = width
         self.height = height
+        self.default_color_func = random_color
 
         self.color_map: dict[int, tuple[int, int, int]] = defaultdict(lambda: (255, 255, 255))
 
@@ -140,7 +141,7 @@ class SpikeDrawer():
             if add_spike and len(self.neurons) < self.max_neurons:
                 self.neurons.append(spike[1])
                 if spike[1] not in self.color_map:
-                    self.color_map[spike[1]] = random_color()
+                    self.color_map[spike[1]] = self.default_color_func(spike[1])
             else:
                 return
         if spike[0] < self.surface_split:
@@ -397,7 +398,7 @@ def addc(color1, color2):
     a = clamp(color1[3] + color2[3], ub=254)
     return (r, g, b, a)
 
-def random_color():
+def random_color(_):
     r = random.randrange(0, 255)
     g = random.randrange(0, 255)
     b = random.randrange(0, 255)

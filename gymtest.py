@@ -17,8 +17,11 @@ from pathlib import Path
 import pygame
 from tqdm import trange
 
+from FlyMimic import flymimic
 import display
 import neuron_groups
+
+print(flymimic.fly)
 
 def setup_fly(timestep):
     actuated_joints = flygym.preprogrammed.all_leg_dofs # type: ignore
@@ -40,7 +43,6 @@ def setup_fly(timestep):
         cameras=[cam],
         timestep=timestep
     )
-    sim.physics.copy
     sim.physics._warnings_cause_exception = False
     obs, info = sim.reset()
     return sim, obs, info
@@ -120,9 +122,9 @@ class MjcSim:
 
                 if spike in neuron_to_muscle_index:
                     index, sign = neuron_to_muscle_index[spike]
-                    joint_state[index] += sign * .03
+                    joint_state[index] += sign * .06
 
-                    print("spiked!", spike, actuated_joints[index], joint_state[index])
+                    # print("spiked!", spike, actuated_joints[index], joint_state[index])
                 # for group, group_neurons in leg_neuron_groups.items():
                     # if spike in group_neurons and group in muscle_to_gym_muscle_index:
                         # joint_index, sign = muscle_to_gym_muscle_index[group]
@@ -297,10 +299,9 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     mp_context = multiprocessing.get_context("spawn")
     frame_queue = mp_context.Queue()
-    frame_ready = mp_context.Condition()
     event_queue = mp_context.Queue()
     WIDTH, HEIGHT = (1280, 720)
-    process = mp_context.Process(target=display.pygame_thread, args=(frame_queue, frame_ready, event_queue, (WIDTH, HEIGHT)))
+    process = mp_context.Process(target=display.pygame_thread, args=(frame_queue, event_queue, (WIDTH, HEIGHT)))
     process.start()
 
     scene_option = mujoco.wrapper.core.MjvOption()

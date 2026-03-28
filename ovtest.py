@@ -70,8 +70,8 @@ def get_gradients(con, start_synapse_weights, learned_syn_weights, learned_neu_w
     
     return learned_syn_weights.grad, learned_neu_weights.grad
 
-core = openvino.Core()
-print(core.get_available_devices())
+# core = openvino.Core()
+# print(core.get_available_devices())
 
 df_neu, df_con = data.load("mbanc")
 flyid2i = {j: i for i, j in enumerate(df_neu.index)}  # flywire id: brian ID
@@ -107,6 +107,7 @@ print("c took", end - start3, "seconds")
 
 con = jnp.array(con)
 start_synapse_weights = jnp.array(start_synapse_weights, dtype=jnp.float32)
+neu_weight_mods = jnp.full(len(df_neu), 0.)
 learned_syn_weights = jnp.array(learned_syn_weights, dtype=jnp.float32)
 learned_neu_weights = jnp.array(learned_neu_weights, dtype=jnp.float32)
 neurons_to_activate = jnp.array(neurons_to_activate)
@@ -116,11 +117,11 @@ neurons_to_push_weights = jnp.array(neurons_to_push_weights, dtype=jnp.float32)
 # ov_model = openvino.convert_model(loss)
 jloss = jax.jit(jax.grad(learn.loss, (2, 3)))
 start1 = time.monotonic()
-a = jloss(con, start_synapse_weights, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
+a = jloss(con, start_synapse_weights, neu_weight_mods, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
 start2 = time.monotonic()
-b = jloss(con, start_synapse_weights, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
+b = jloss(con, start_synapse_weights, neu_weight_mods, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
 start3 = time.monotonic()
-c = jloss(con, start_synapse_weights, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
+c = jloss(con, start_synapse_weights, neu_weight_mods, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
 end = time.monotonic()
 
 print(a)
@@ -130,6 +131,9 @@ print("jax a took", start2 - start1, "seconds")
 print("jax b took", start3 - start2, "seconds")
 print("jax c took", end - start3, "seconds")
 
-# loss_jaxpr = jax.make_jaxpr(jax.grad(learn.loss, (2, 3)))(con, start_synapse_weights, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
+# asdf = jax.grad(learn.loss, (2, 3))(con, start_synapse_weights, neu_weight_mods, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
+# print(asdf)
 
-# ov_model = openvino.convert_model(loss_jaxpr)
+loss_jaxpr = jax.make_jaxpr(jax.grad(learn.loss, (2, 3)))(con, start_synapse_weights, neu_weight_mods, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
+
+ov_model = openvino.convert_model(loss_jaxpr)

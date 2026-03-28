@@ -17,11 +17,8 @@ from pathlib import Path
 import pygame
 from tqdm import trange
 
-from FlyMimic import flymimic
 import display
 import neuron_groups
-
-print(flymimic.fly)
 
 def setup_fly(timestep):
     actuated_joints = flygym.preprogrammed.all_leg_dofs # type: ignore
@@ -122,7 +119,7 @@ class MjcSim:
 
                 if spike in neuron_to_muscle_index:
                     index, sign = neuron_to_muscle_index[spike]
-                    joint_state[index] += sign * .06
+                    joint_state[index] += sign * .09
 
                     # print("spiked!", spike, actuated_joints[index], joint_state[index])
                 # for group, group_neurons in leg_neuron_groups.items():
@@ -137,7 +134,8 @@ class MjcSim:
             # self.joint_records.append(interp_walk_data(walk_data, walk_data_timestep, i / steps_per_second))
             i += 1
 
-            joint_state[:] = (starting_positions * .01 + joint_state * .99)
+            angle_decay = .005
+            joint_state[:] = (starting_positions * angle_decay + joint_state * (1 - angle_decay))
             obs, reward, terminated, truncated, info = sim.step(action)
             self.obs_queue.put(obs) #this is nothing for now
 
@@ -251,7 +249,10 @@ def get_starting_pose1():
 
 def get_starting_pose2():
     walk_data, _ = get_walk_data()
-    return np.median(walk_data, axis=1)
+    pose = np.median(walk_data, axis=1)
+    # pose[26] = .9
+    pose[5] = .6
+    return pose
     
 if __name__ == "__main__":
     run_time = 1.1

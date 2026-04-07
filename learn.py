@@ -391,7 +391,7 @@ def weight_by_time_and_voltage(voltages, time):
     if np.isnan(weight).any():
         print(weight)
         raise Exception("array had a nan")
-    print("getting weights by time", time, weight, weight.shape, voltages_in_window, len(voltages_in_window))
+    print("getting weights by time", time, weight, np.sum(weight), weight.shape, voltages_in_window, len(voltages_in_window))
     # weight = 10 ** (weight / 7) 
     weight = weight/7
     return weight

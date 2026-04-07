@@ -1,27 +1,70 @@
 from collections import defaultdict
 from dataclasses import dataclass
+import dataclasses
 from queue import Empty, Queue
 import queue
 import sys
 from threading import Condition
 import threading
 from time import sleep
-from brian2 import Hz, Network, NeuronGroup, PoissonInput, SpikeMonitor, StateMonitor, Synapses, mV, ms, network_operation, run
+from typing import Any
+from brian2 import Hz, Network, NeuronGroup, PoissonInput, Quantity, SpikeMonitor, StateMonitor, Synapses, Unit, mV, ms, network_operation, run
 import brian2
 import numpy as np
 import pandas as pd
 import data
 from profile_dec import profile
 
+@dataclass
+class SimParams:
+    v_0: Any
+    v_rst: Any
+    v_th: Any
+    t_mbr: Any
+    tau: Any
+
+    synapse_weight: Any
+    poisson_rate: Any
+    model_eqs: str
+    threshold_eq: str
+    t_dly: Any
+    reset_eq: str
+    refractory_period: Any
+
+def default_params():
+    return SimParams(
+        v_0 = 0 * mV,              # resting potential
+        v_rst = 0 * mV,              # reset potential after spike
+        v_th = 7 * mV,              # threshold for spiking
+        t_mbr =  20 * ms,              # membrane time scale (capacitance * resistance = .002 * uF * 10. * Mohm)
+        tau = 5 * ms,                # time constant 
+
+        synapse_weight = .1 * mV,
+        poisson_rate = 250 * Hz,
+        model_eqs = ''' 
+        dv/dt = (v_0 - v + g) / t_mbr : volt (unless refractory)
+        dg/dt = -g / tau              : volt (unless refractory) 
+        rfc                           : second
+        p_weight                      : volt
+        input                         : Hz
+        ''',
+        threshold_eq = 'v > v_th or (t - lastspike) * input > 1',
+        t_dly = 1.8 * ms,
+        reset_eq = 'v = v_rst; w = 0; g = 0 * mV',
+        refractory_period = 2.2 * ms,
+    )
+
 class NeuronSim:
-    def __init__(self, df_neu, df_con, dataset_name, neurons_to_activate, runtime = 1000 * ms) -> None:
+    def __init__(self, df_neu, df_con, dataset_name, neurons_to_activate, runtime = 1000 * ms, params = None) -> None:
         self.spike_queue = Queue()
         self.input_queue = Queue()
         self.control_queue = Queue()
         self.voltages = np.ndarray([])
+        self.params = params if params != None else default_params()
+        self.dataset_name = dataset_name
         neuron_thread = threading.Thread(
             target=self.start_neuron_sim, 
-            args=(df_neu, df_con, dataset_name, neurons_to_activate),
+            args=(df_neu, df_con, neurons_to_activate),
             kwargs={"runtime": runtime}
         )
         neuron_thread.start()
@@ -32,38 +75,17 @@ class NeuronSim:
     def get_voltages(self):
         return self.voltages
 
-    def start_neuron_sim(self, df_neu, df_con, dataset_name, neurons_to_activate, runtime=100_000 * ms):
-        self.start_neuron_sim_do(df_neu, df_con, dataset_name, neurons_to_activate, runtime)
+    def start_neuron_sim(self, df_neu, df_con, neurons_to_activate, runtime=100_000 * ms):
+        self.start_neuron_sim_do(df_neu, df_con, neurons_to_activate, runtime)
 
     # @profile
-    def start_neuron_sim_do(self, df_neu, df_con, dataset_name, neurons_to_activate, runtime=100_000 * ms):
+    def start_neuron_sim_do(self, df_neu, df_con, neurons_to_activate, runtime=100_000 * ms):
         print("started neuron sim, duration", runtime)
         # load name/id mappings
         flyid2i = {j: i for i, j in enumerate(df_neu.index)}  # flywire id: brian ID
         i2flyid = {j: i for i, j in flyid2i.items()} # brian ID: flywire ID
 
         i2flyid_np = np.vectorize(i2flyid.get, otypes=[np.integer])
-
-        v_0 = 0 * mV               # resting potential
-        v_rst = 0 * mV               # reset potential after spike
-        v_th = 7 * mV               # threshold for spiking
-        t_mbr =  20 * ms               # membrane time scale (capacitance * resistance = .002 * uF * 10. * Mohm)
-        tau = 5 * ms                 # time constant 
-
-        # params = model.default_params
-        synapse_weight = .1 * mV
-        poisson_rate = 250 * Hz
-        model_eqs = ''' 
-        dv/dt = (v_0 - v + g) / t_mbr : volt (unless refractory)
-        dg/dt = -g / tau               : volt (unless refractory) 
-        rfc                            : second
-        p_weight                       : volt
-        input                          : Hz
-        '''
-        threshold_eq = 'v > v_th or (t - lastspike) * input > 1'
-        t_dly = 1.8 * ms
-        reset_eq = 'v = v_rst; w = 0; g = 0 * mV'
-        refractory_period = 2.2 * ms
 
         # model.run_trial([flyid2i[flyid] for flyid in test.neu_sugar], [], [], path_comp, path_con, params)
 
@@ -73,16 +95,16 @@ class NeuronSim:
 
         neu = NeuronGroup( # create neurons
             N = len(df_neu),
-            model = model_eqs,
+            model = self.params.model_eqs,
             method = 'linear',
-            threshold = threshold_eq,
-            reset = reset_eq,
+            threshold = self.params.threshold_eq,
+            reset = self.params.reset_eq,
             refractory = 'rfc',
             name = 'default_neurons',
-            # namespace = params,
+            namespace = dataclasses.asdict(self.params),
         )
 
-        syn = Synapses(neu, neu, 'w : volt', on_pre='g += w', delay=t_dly, name='default_synapses')
+        syn = Synapses(neu, neu, 'w : volt', on_pre='g += w', delay=self.params.t_dly, name='default_synapses')
         i_pre = df_con.loc[:, 'Presynaptic_Index'].values
         i_post = df_con.loc[:, 'Postsynaptic_Index'].values
 
@@ -108,23 +130,23 @@ class NeuronSim:
 
         voltage_monitor = StateMonitor(neu, "v", True, dt=1 * ms)
 
-        _, synapse_map, reverse_synapse_map = data.get_synapse_map(dataset_name)
-
         # poi_inp, neu = model.poi(neu, neurons_i, [], params)
         pois = []
-        for i in neurons_indexes:
-            print("creating poi for", i2flyid[i])
-            p = PoissonInput(
-                target=neu[i], 
-                target_var='v', 
-                N=1, 
-                rate=poisson_rate ,
-                weight="p_weight"
-                # weight=params['w_syn']*params['f_poi'],
-                # weight = 68.75 * mV
-                )
-            neu[i].rfc = 0 * ms # no refractory period for Poisson targets
-            pois.append(p)
+        poi = False
+        if poi:
+            for i in neurons_indexes:
+                print("creating poi for", i2flyid[i])
+                p = PoissonInput(
+                    target=neu[i], 
+                    target_var='v', 
+                    N=1, 
+                    rate=self.params.poisson_rate ,
+                    weight="p_weight"
+                    # weight=params['w_syn']*params['f_poi'],
+                    # weight = 68.75 * mV
+                    )
+                neu[i].rfc = 0 * ms # no refractory period for Poisson targets
+                pois.append(p)
 
         poi_inp = pois
 
@@ -244,11 +266,11 @@ class NeuronSim:
                     else:
                         neu_weights_by_syn = 1
 
-                    syn.w = df_con.loc[:,'Excitatory x Connectivity'].values * syn_weight_mods * synapse_weight * neu_weights_by_syn
+                    syn.w = df_con.loc[:,'Excitatory x Connectivity'].values * syn_weight_mods * self.params.synapse_weight * neu_weights_by_syn
                     # print(syn.w)
-                    neu.v = v_0
+                    neu.v = self.params.v_0
                     neu.g = 0
-                    neu.rfc = refractory_period
+                    neu.rfc = self.params.refractory_period
                     break
 
             # run simulation
@@ -258,4 +280,5 @@ class NeuronSim:
             net.run(duration=runtime)
 
             self.voltages = voltage_monitor.v
+            self.spikes = (spk_mon.t, spk_mon.i)
             self.spike_queue.put(None)

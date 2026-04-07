@@ -39,14 +39,14 @@ def forward(con, start_synapse_weights, learned_syn_weights, learned_neu_weights
 
     return all_neurons
 
-# @torch.compile(backend="openvino", options = {"device": "GPU"})
-@torch.compile()
+@torch.compile(backend="openvino", options = {"device": "GPU"})
+# @torch.compile()
 def loss(con, start_synapse_weights, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights):
     new_neuron_values = forward(con, start_synapse_weights, learned_syn_weights, learned_neu_weights, neurons_to_activate)
     return torch.sum(neurons_to_push_weights * new_neuron_values[neurons_to_push])
 
-@torch.compile()
-# @torch.compile(backend="openvino", options = {"device": "GPU"})
+# @torch.compile()
+@torch.compile(backend="openvino", options = {"device": "GPU"})
 def get_gradients(con, start_synapse_weights, learned_syn_weights, learned_neu_weights, 
                   neurons_to_activate, neurons_to_push, neurons_to_push_weights):
     
@@ -90,6 +90,7 @@ learned_neu_weights = torch.full((len(df_neu),), 1.0, dtype=torch.float32)
 con = torch.tensor(df_con.to_numpy()[..., [2, 3]])
 start_synapse_weights = torch.tensor(df_con.to_numpy()[..., 6], dtype=torch.float32)
 
+'''
 start1 = time.monotonic()
 a = get_gradients(con, start_synapse_weights, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
 start2 = time.monotonic()
@@ -104,6 +105,7 @@ print(b)
 print("a took", start2 - start1, "seconds")
 print("b took", start3 - start2, "seconds")
 print("c took", end - start3, "seconds")
+'''
 
 con = jnp.array(con)
 start_synapse_weights = jnp.array(start_synapse_weights, dtype=jnp.float32)
@@ -115,6 +117,7 @@ neurons_to_push = jnp.array(neurons_to_push)
 neurons_to_push_weights = jnp.array(neurons_to_push_weights, dtype=jnp.float32)
 
 # ov_model = openvino.convert_model(loss)
+'''
 jloss = jax.jit(jax.grad(learn.loss, (2, 3)))
 start1 = time.monotonic()
 a = jloss(con, start_synapse_weights, neu_weight_mods, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
@@ -130,6 +133,7 @@ print(b)
 print("jax a took", start2 - start1, "seconds")
 print("jax b took", start3 - start2, "seconds")
 print("jax c took", end - start3, "seconds")
+'''
 
 # asdf = jax.grad(learn.loss, (2, 3))(con, start_synapse_weights, neu_weight_mods, learned_syn_weights, learned_neu_weights, neurons_to_activate, neurons_to_push, neurons_to_push_weights)
 # print(asdf)

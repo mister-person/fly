@@ -77,10 +77,10 @@ if __name__ == "__main__":
     print(weights)
     weights /= 100
 
-    '''
     plt.plot(weights, [len(s[1]) / runtime for s in spk_mon.spike_trains().items()][1:], color="blue")
     plt.plot(weights, np.log2((weights - 12.5).clip(min = 1, max=100)), color="red")
-    plt.plot(weights, np.maximum(np.log2((weights * 100 - 12.5).clip(min = 1)) * 10, weights).clip(max=100), color="black")
+    plt.plot(weights, np.maximum(np.log2((weights * 100 - 12.5).clip(min = 0)) * 10, weights).clip(max=100), color="black")
+
     '''
     plt.plot(vrst_weights, [len(s[1]) / runtime for s in spk_mon.spike_trains().items()][1:], color="blue")
     plt.plot(vrst_weights, np.log2((weights - 12.5).clip(min = 1, max=100)), color="red")
@@ -88,6 +88,7 @@ if __name__ == "__main__":
     plt.plot(vrst_weights, np.maximum(np.log2((np.array([syn_w / 100]) * 100 - 12.5).clip(min = 1)) * 10, weights).clip(max=100), color="black")
     # plt.plot(weights, (weights * 10))
     # plt.plot(weights, np.tanh((weights)*10))
+    '''
     '''
     plt.plot(weights, [len(s[1]) / runtime for s in spk_mon.spike_trains().items()])
     plt.plot(weights, np.log2((weights - 12.5).clip(min = 1, max=100)) * 15)

@@ -8,7 +8,7 @@ from jax import config
 # config.update("jax_debug_infs", True)
 # config.update("jax_disable_jit", True)
 
-h_size = 25
+h_size = 6
 
 key = jax.random.key(32)
 
@@ -21,16 +21,16 @@ b1 = jnp.zeros((h_size))
 
 def act_grad(inp):
     # return jax.nn.sigmoid(inp)
-    return jnp.tanh(inp) * 1
+    return jnp.tanh(inp) * .01
     # return inp * 10
     # return 0.0
 
 @jax.custom_gradient
-def act_func(inp):
+def act_func(inp) -> jax.Array:
     h1 = jnp.heaviside(inp, 1)
     h2 = jnp.heaviside(inp + .5, 1)
     h3 = jnp.heaviside(inp - .5, 1)
-    return h1+h2+h3 - 1.5, lambda g: jax.vmap(jax.grad(act_grad))(g)
+    return h1+h2+h3 - 1.5, lambda g: jax.vmap(jax.grad(act_grad))(g) #type: ignore
 
 #26.6 tahn @40
 
@@ -39,8 +39,8 @@ def foo(inp, mlp1, b1, mlp2):
     # act = jax.nn.relu(m1out + b1)
     act = act_func(m1out + b1)
     # act = jnp.heaviside(m1out + b1, 1)
-    m2out = mlp2 @ act
-    return m2out
+    m2out = jnp.sum(jax.vmap(act_func)(mlp2 * act), axis=1)
+    return m2out * .1
 
 def loss(inp, mlp1, b1, mlp2):
     out = foo(inp, mlp1, b1, mlp2)
@@ -51,7 +51,7 @@ get_grad = jax.grad(loss, argnums = (1, 2, 3))
 
 plt = plt_thread.ThreadedPlot()
 
-lr = .005
+lr = 1
 losses1 = []
 losses2 = []
 losses3 = []
@@ -72,48 +72,7 @@ while True:
     examples = jax.random.uniform(subkey, (batch_size, 4), float, -10, 10)
 
     grad1, gradb1, grad2 = jitd(examples, mlp1, b1, mlp2)
-    if jnp.any(jnp.isnan(grad1)) or jnp.any(jnp.isnan(grad2)):
-        print("where are they nan? (living among us)", jnp.where(jnp.isnan(grad1)))
-        if jnp.any(jnp.isnan(grad1)):
-            nan_batch_index = jnp.where(jnp.isnan(grad1))[0][0]
-        elif jnp.any(jnp.isnan(grad2)):
-            nan_batch_index = jnp.where(jnp.isnan(grad2))[0][0]
-        else:
-            raise Exception("unreachable")
-        bad_example = examples[nan_batch_index]
-
-        repro = jnp.stack(jitd(examples, mlp1, b1, mlp2))
-
-        empty = examples.at[:].set(jnp.array([0, 0, 0, 0]))
-        repro2 = jnp.stack(jitd(empty, mlp1, b1, mlp2))
-        
-        examples3 = empty.at[:].set(bad_example)
-        repro3 = jnp.stack(jitd(empty, mlp1, b1, mlp2))
-
-        examples4 = empty.at[0].set(bad_example)
-        repro4 = jnp.stack(jitd(empty, mlp1, b1, mlp2))
-
-        print("repros:", jnp.any(jnp.isnan(repro)), jnp.any(jnp.isnan(repro2)), jnp.any(jnp.isnan(repro3)), jnp.any(jnp.isnan(repro4)))
-
-        print("nan")
-        print("grads", grad1, grad2)
-        print("shape", grad1.shape)
-        print("grads", jnp.isnan(grad1).shape)
-        print("grads", grad1[nan_batch_index])
-        print("grads", grad2[nan_batch_index])
-        print("example with nans", bad_example)
-        print("and forward", foo(bad_example, mlp1, b1, mlp2))
-        print("with loss", loss(bad_example, mlp1, b1, mlp2))
-        print("with loss+delta", loss(bad_example + .000001, mlp1, b1, mlp2))
-        print("grads again", get_grad(bad_example, mlp1, b1, mlp2))
-        print("grads again", get_grad(bad_example + .000001, mlp1, b1, mlp2))
-        actual_loss = jax.vmap(loss, in_axes = [0, None, None, None])(examples, mlp1, b1, mlp2)
-        print("loss", actual_loss)
-        grads_no_vmap = jnp.stack(get_grad(bad_example, mlp1, b1, mlp2))
-        if not jnp.any(jnp.isnan(grads_no_vmap)):
-            print("exiting")
-            exit()
-    else:
+    if not (jnp.any(jnp.isnan(grad1)) or jnp.any(jnp.isnan(grad2))):
         mlp1 -= jnp.sum(grad1, axis=0) * lr / batch_size
         b1 -= jnp.sum(gradb1, axis=0) * lr / batch_size
         mlp2 -= jnp.sum(grad2, axis=0) * lr / batch_size

@@ -9,3 +9,4 @@ data/*
 rust_utils/target
 venv
 FlyMimic
+tmp

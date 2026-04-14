@@ -62,6 +62,7 @@ class NeuronSim:
         self.voltages = np.ndarray([])
         self.params = params if params != None else default_params()
         self.dataset_name = dataset_name
+        self.voltage_resolution = 1*ms
         neuron_thread = threading.Thread(
             target=self.start_neuron_sim, 
             args=(df_neu, df_con, neurons_to_activate),
@@ -128,7 +129,7 @@ class NeuronSim:
 
         spk_mon = SpikeMonitor(neu) 
 
-        voltage_monitor = StateMonitor(neu, "v", True, dt=1 * ms)
+        voltage_monitor = StateMonitor(neu, "v", True, dt=self.voltage_resolution)
 
         # poi_inp, neu = model.poi(neu, neurons_i, [], params)
         pois = []

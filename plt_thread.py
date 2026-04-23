@@ -12,6 +12,13 @@ class ThreadedPlot:
         process.start()
 
     def start(self, queue: multiprocessing.Queue):
+        try:
+            self.run(queue)
+        except KeyboardInterrupt:
+            print("closing pyplot windows")
+            plt.close("all")
+
+    def run(self, queue: multiprocessing.Queue):
         plt.ion()
         plt.show()
         plt.figure(1)
@@ -25,6 +32,8 @@ class ThreadedPlot:
                         plt.clf(*msg[0], **msg[1])
                     if msg_type == "cla":
                         plt.cla(*msg[0], **msg[1])
+                    if msg_type == "figure":
+                        plt.figure(*msg[0], **msg[1])
 
             except Empty:
                 pass
@@ -42,3 +51,6 @@ class ThreadedPlot:
 
     def cla(self, *args, **kwargs):
         self.queue.put(("cla", (args, kwargs)))
+
+    def figure(self, *args, **kwargs):
+        self.queue.put(("figure", (args, kwargs)))

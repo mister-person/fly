@@ -13,7 +13,7 @@ from neuron_model import NeuronSim
 from plt_thread import ThreadedPlot
 import pygame_loop
 
-if __name__ == "__main__":
+def main():
     _, orig_df_con = data.load("mbanc")
     neuron_count = 100000
     syn_count = 10_000_000
@@ -196,3 +196,5 @@ if __name__ == "__main__":
         plt.plot(loss3 / loss3[0], color="blue")
         plt.plot(np.array(loss4) / loss4[0], color="green")
 
+if __name__ == "__main__":
+    main()

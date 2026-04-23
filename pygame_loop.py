@@ -7,7 +7,7 @@ import random
 import data
 
 class PygameProcess:
-    def __init__(self, dataset_name = None, color_map = {}, default_color_func=None):
+    def __init__(self, dataset_name = None, color_map = {}, default_color_func=None, unit_height=1):
         multiprocessing.freeze_support()
         mp_context = multiprocessing.get_context("spawn")
         self.pygame_spike_queue = mp_context.Queue()
@@ -15,6 +15,7 @@ class PygameProcess:
         self.frame_queue = mp_context.Queue()
         self.dataset_name = dataset_name
         self.default_color_func = default_color_func
+        self.unit_height = unit_height
         # frame_queue.put((700, 700, np.empty(shape=(700*700*3,), dtype=np.int8).tobytes(), 0))
         render_process = mp_context.Process(target=self.start_pygame, args=[self.pygame_spike_queue, self.control_queue, self.frame_queue, self.dataset_name, color_map])
         render_process.start()
@@ -37,7 +38,7 @@ class PygameProcess:
 
         spike_drawer = drawutils.SpikeDrawer(WIDTH, HEIGHT)
         spike_drawer.time_size = 1
-        spike_drawer.set_unit_height(1)
+        spike_drawer.set_unit_height(self.unit_height)
         if self.default_color_func != None:
             spike_drawer.default_color_func = self.default_color_func
 
@@ -138,7 +139,6 @@ class PygameProcess:
                 while True:
                     queue_get = spike_queue.get_nowait()
                     if queue_get is None:
-                        print("fucking reset")
                         spike_drawer.data.clear()
                         spike_drawer.reset_surfaces()
                         continue

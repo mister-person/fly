@@ -13,8 +13,6 @@ import neuron_model
 #100us
 #1.8ms
 
-# todo shape thing
-
 @dataclass(eq=True, frozen=True)
 class Params:
     neuron_decay: float
@@ -26,22 +24,27 @@ class Params:
     global_synapse_weight: float
 
 def synapse_activation_gradient_fn(start_voltage, threshold):
-    return jnp.tanh((start_voltage - threshold)/3)
+    return jnp.tanh((start_voltage - threshold) * .3)
 
 @jax.custom_gradient
 def synapse_activation(start_voltage, threshold):
-    return start_voltage >= threshold, lambda g: jax.vmap(jax.grad(synapse_activation_gradient_fn))(g) #type: ignore
+    def f(g):
+        return jax.grad(synapse_activation_gradient_fn)(start_voltage, threshold) * g, 0
+    return (start_voltage >= threshold) * 1., f
+    # return (start_voltage >= .007) * 1., lambda g: jax.grad(synapse_activation_gradient_fn)(start_voltage) * g #type: ignore
 
 def timestep(params, connections, synapse_weights, voltages, refractory_timers, rise_values, iteration):
     neurons_current = voltages[iteration]
 
     neurons_pre_synapse = jnp.where(iteration - params.delay_iters >= 0, voltages[iteration - params.delay_iters], jnp.zeros_like(neurons_current))
-    pre_synapse_strengths = synapse_activation(neurons_pre_synapse[connections[..., 0]], params.threshold)
-    synapse_strenghts: jnp.ndarray = (pre_synapse_strengths * synapse_weights)
+    pre_synapse_strengths = neurons_pre_synapse[connections[..., 0]]
+    pre_synapse_strengths_act = jax.vmap(synapse_activation, in_axes=(0, None))(pre_synapse_strengths, params.threshold)
+    # pre_synapse_strengths_act = synapse_activation(pre_synapse_strengths, params.threshold)
+    synapse_strenghts: jnp.ndarray = (pre_synapse_strengths_act * synapse_weights)
     neuron_updates = jnp.zeros_like(neurons_current).at[connections[..., 1]].add(synapse_strenghts)
 
     rise_values += neuron_updates
-    rise_values = rise_values * params.rise_decay * (refractory_timers == 0)
+    rise_values = rise_values * params.rise_decay * (refractory_timers != 1)
 
     out = (neurons_current - rise_values) * params.neuron_decay + rise_values
     out = out * (refractory_timers == 0)
@@ -51,21 +54,39 @@ def timestep(params, connections, synapse_weights, voltages, refractory_timers, 
 
     return out, new_refractory_timers, rise_values
 
-# @jax.jit(static_argnames=["params", "num_neurons"])
+@jax.jit(static_argnames=["params", "num_neurons"])
 def run_sim(params, connections, num_neurons, synapse_weights, neurons_to_activate):
     synapse_weights *= params.global_synapse_weight
     all_voltages = jnp.zeros((params.steps, num_neurons))
     refractory_timers = jnp.zeros(num_neurons)
-    rise_values = jnp.zeros(num_neurons)
+    rise_values = jnp.zeros((params.steps, num_neurons))
     def loop(i, x):
         (all_voltages, refractory_timers, rise_values) = x
         with_input = all_voltages.at[i, neurons_to_activate].set(((i%100)==0) * params.threshold / params.neuron_decay)
-        neurons, refractory_timers, rise_values = timestep(params, connections, synapse_weights, with_input, refractory_timers, rise_values, i)
+        neurons, refractory_timers, new_rise_values = timestep(params, connections, synapse_weights, with_input, refractory_timers, rise_values[i], i)
         all_voltages = all_voltages.at[i + 1].set(neurons)
+        rise_values = rise_values.at[i + 1].set(new_rise_values)
         return (all_voltages, refractory_timers, rise_values)
     (all_voltages, refractory_timers, rise_values) = jax.lax.fori_loop(0, params.steps, loop, (all_voltages, refractory_timers, rise_values))
 
-    return all_voltages
+    return all_voltages, refractory_timers, rise_values
+
+@jax.jit(static_argnames=["params", "num_neurons"])
+def sim_loss(params, connections, num_neurons, synapse_weights, neurons_to_activate, target_voltages):
+    voltages, _, _ = run_sim(params, connections, num_neurons, synapse_weights, neurons_to_activate)
+    return jnp.sum((target_voltages - voltages) ** 2)
+
+@jax.jit(static_argnames=["params", "num_neurons"])
+def sim_rise_loss(params, connections, num_neurons, synapse_weights, neurons_to_activate, target_rise_values):
+    _, _, rise_values = run_sim(params, connections, num_neurons, synapse_weights, neurons_to_activate)
+    return jnp.sum((target_rise_values - rise_values) ** 2)
+
+get_sim_grads = jax.grad(sim_loss, argnums = [3])
+get_sim_rise_grads = jax.grad(sim_rise_loss, argnums = [3])
+
+@jax.jit(static_argnames=["params", "num_neurons"])
+def sum_sim(params, connections, num_neurons, synapse_weights, neurons_to_activate):
+    return jnp.sum(run_sim(params, connections, num_neurons, synapse_weights, neurons_to_activate))
 
 def run_full_model():
     import data
@@ -109,13 +130,17 @@ def run_full_model():
     b2v = b2sim.voltages
     """
 
+    print(synapse_weights)
     sim_start = time.monotonic()
     # v = compiled(params, connections, num_neurons, synapse_weights, neurons_to_activate)
-    print(synapse_weights)
-    v = run_sim(params, connections, num_neurons, synapse_weights, neurons_to_activate)
-    print(v[-1][-1])
+    # v = run_sim(params, connections, num_neurons, synapse_weights, neurons_to_activate)
+    # print(v[-1][-1])
+    v_sum = sum_sim(params, connections, num_neurons, synapse_weights, neurons_to_activate)
+    print(v_sum)
     sim_end = time.monotonic()
     print("jax sim took", sim_end - sim_start, "seconds")
+
+    exit()
 
     # pygame_process = pygame_loop.PygameProcess()
     # all_spikes = jax.jit(lambda a: jnp.where(a >= params.threshold, size=10000))(v)
@@ -251,6 +276,6 @@ def test_against_b2():
         plt.pause(1)
 
 if __name__ == "__main__":
-    test_against_b2()
+    # test_against_b2()
 
-    # run_full_model()
+    run_full_model()

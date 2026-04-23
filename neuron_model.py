@@ -63,12 +63,12 @@ class NeuronSim:
         self.params = params if params != None else default_params()
         self.dataset_name = dataset_name
         self.voltage_resolution = 1*ms
-        neuron_thread = threading.Thread(
+        self.neuron_thread = threading.Thread(
             target=self.start_neuron_sim, 
             args=(df_neu, df_con, neurons_to_activate),
             kwargs={"runtime": runtime}
         )
-        neuron_thread.start()
+        self.neuron_thread.start()
 
     def start(self, params):
         self.control_queue.put(("start", params))
@@ -78,6 +78,9 @@ class NeuronSim:
 
     def start_neuron_sim(self, df_neu, df_con, neurons_to_activate, runtime=100_000 * ms):
         self.start_neuron_sim_do(df_neu, df_con, neurons_to_activate, runtime)
+
+    def kill(self):
+        self.control_queue.put(("stop"))
 
     # @profile
     def start_neuron_sim_do(self, df_neu, df_con, neurons_to_activate, runtime=100_000 * ms):
@@ -267,16 +270,23 @@ class NeuronSim:
                     else:
                         neu_weights_by_syn = 1
 
+                    if "neurons_to_activate" in learned_params:
+                        self.neurons_to_activate = learned_params["neurons_to_activate"]
+                        neurons_indexes = [flyid2i[flyid] for flyid in neurons_to_activate]
+                        neu.input[:] = 0 * Hz
+                        neu.input[neurons_indexes] = 100 * Hz
+
                     syn.w = df_con.loc[:,'Excitatory x Connectivity'].values * syn_weight_mods * self.params.synapse_weight * neu_weights_by_syn
                     # print(syn.w)
                     neu.v = self.params.v_0
                     neu.g = 0
                     neu.rfc = self.params.refractory_period
                     break
+                if event[0] == "stop":
+                    return
 
             # run simulation
             net_start_time = net.t
-            print("net start time", net_start_time)
 
             net.run(duration=runtime)
 

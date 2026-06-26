@@ -8,6 +8,10 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(sys.argv[0]).resolve().parent.parent))
+
 import neuron_model
 
 #100us
@@ -24,21 +28,25 @@ class Params:
     global_synapse_weight: float
 
 def synapse_activation_gradient_fn(start_voltage, threshold):
-    return jnp.tanh((start_voltage - threshold) * .3)
+    return jnp.tanh((start_voltage / threshold - 1) * 2) * 10
 
 @jax.custom_gradient
 def synapse_activation(start_voltage, threshold):
     def f(g):
         return jax.grad(synapse_activation_gradient_fn)(start_voltage, threshold) * g, 0
+    # jax.debug.print("in activation {} {}", start_voltage, threshold)
     return (start_voltage >= threshold) * 1., f
     # return (start_voltage >= .007) * 1., lambda g: jax.grad(synapse_activation_gradient_fn)(start_voltage) * g #type: ignore
+
+def simple_activation(start_voltage, threshold):
+    return (start_voltage >= threshold) * 1.
 
 def timestep(params, connections, synapse_weights, voltages, refractory_timers, rise_values, iteration):
     neurons_current = voltages[iteration]
 
     neurons_pre_synapse = jnp.where(iteration - params.delay_iters >= 0, voltages[iteration - params.delay_iters], jnp.zeros_like(neurons_current))
     pre_synapse_strengths = neurons_pre_synapse[connections[..., 0]]
-    pre_synapse_strengths_act = jax.vmap(synapse_activation, in_axes=(0, None))(pre_synapse_strengths, params.threshold)
+    pre_synapse_strengths_act = jax.vmap(simple_activation, in_axes=(0, None))(pre_synapse_strengths, params.threshold)
     # pre_synapse_strengths_act = synapse_activation(pre_synapse_strengths, params.threshold)
     synapse_strenghts: jnp.ndarray = (pre_synapse_strengths_act * synapse_weights)
     neuron_updates = jnp.zeros_like(neurons_current).at[connections[..., 1]].add(synapse_strenghts)
@@ -86,7 +94,8 @@ get_sim_rise_grads = jax.grad(sim_rise_loss, argnums = [3])
 
 @jax.jit(static_argnames=["params", "num_neurons"])
 def sum_sim(params, connections, num_neurons, synapse_weights, neurons_to_activate):
-    return jnp.sum(run_sim(params, connections, num_neurons, synapse_weights, neurons_to_activate))
+    voltages, _, _ = run_sim(params, connections, num_neurons, synapse_weights, neurons_to_activate)
+    return jnp.sum(voltages)
 
 def run_full_model():
     import data

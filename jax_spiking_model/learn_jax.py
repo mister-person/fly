@@ -10,11 +10,16 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(sys.argv[0]).resolve().parent.parent))
+
 import data
 import jax_spiking_model
 from neuron_model import NeuronSim
 from plt_thread import ThreadedPlot
 import pygame_loop
+import jax_model_grads_hack
 
 def main():
     _, orig_df_con = data.load("mbanc")
@@ -227,7 +232,7 @@ def main2():
     neurons_to_activate = [0]
     syn_count = 1
 
-    runtime = 1000
+    runtime = 100
     params = dataclasses.replace(jax_spiking_model.default_params, steps=runtime * 10)
 
     target_voltages, target_refractory_timers, target_rise_values = jax_spiking_model.run_sim(params, jnp_con, neuron_count, start_strs, jnp.array(neurons_to_activate))
@@ -235,7 +240,10 @@ def main2():
     plt = ThreadedPlot()
 
     # syn_weight_mods = jnp.array(rand.random(syn_count) * .2 + .9)
-    syn_weight_mods = jnp.array([1.3, 1.3])
+    # syn_weight_mods = jnp.array([1.3, 1.3])
+    syn_weight_mods = jnp.array([.7, .7])
+    # syn_weight_mods = jnp.array([1.0681188, 0.72288805])
+    orig_syn_weight_mods = syn_weight_mods
 
     all_spikes = jax.jit(lambda a: jnp.where(a >= params.threshold, size=10000))(target_voltages)
     spike_times = all_spikes[0] / 10000
@@ -255,7 +263,7 @@ def main2():
 
     draw_pygame(target_voltages)
 
-    lr = 200
+    lr = 1000
     draw1 = []
     draw2 = []
     draw3 = []
@@ -268,11 +276,12 @@ def main2():
 
         # real_target = jnp.maximum(target_voltages, voltages)
         # real_target = (target_voltages) * ((voltages != 0) & (target_voltages != 0)) + voltages * ((voltages == 0) & (target_voltages == 0)) + params.threshold * ((target_voltages == 0) & (voltages != 0))
-        index = 2
+        index = 1
 
         spikes = (target_voltages >= params.threshold) | (voltages >= params.threshold)
-        real_target_all_neurons = jnp.where((target_voltages >= params.threshold), voltages + params.threshold, voltages)
-        real_target_all_neurons = jnp.where((voltages >= params.threshold), voltages - params.threshold, real_target_all_neurons)
+        # ok what if instead of setting it to params.threshold we use the voltage of the synapse, aka how far over the threshold it is
+        real_target_all_neurons = jnp.where((target_voltages >= params.threshold) & (voltages < params.threshold), voltages + params.threshold, voltages)
+        real_target_all_neurons = jnp.where(((voltages >= params.threshold) & (target_voltages < params.threshold)), voltages - params.threshold, real_target_all_neurons)
         real_target = voltages.at[:, index].set(real_target_all_neurons[:, index])
 
         # rise_target = rise_values.at[:, index].set(target_rise_values[:, index])
@@ -284,7 +293,12 @@ def main2():
         grad, = jax_spiking_model.get_sim_grads(params, jnp_con, neuron_count, strs, jnp.array(neurons_to_activate), real_target)
         # grad, = jax_spiking_model.get_sim_rise_grads(params, jnp_con, neuron_count, strs, jnp.array(neurons_to_activate), rise_target)
 
+        # zeros = jnp.zeros((params.steps, neuron_count))
+        zeros = jnp.zeros((params.steps, syn_count))
+        int_grads = jax_model_grads_hack.intermediate_grads(params, jnp_con, neuron_count, strs, jnp.array(neurons_to_activate), real_target, zeros)
+
         syn_weight_mods -= grad * lr
+        syn_weight_mods = syn_weight_mods.clip(min=orig_syn_weight_mods * .5, max=orig_syn_weight_mods * 2)
         """#smoothly go to global maximum
         if jnp.linalg.norm(syn_weight_mods - 1) < .01:
             syn_weight_mods = jnp.ones_like(strs)
@@ -312,13 +326,13 @@ def main2():
         plt.plot(draw2np / draw2np[0], color="green")
         plt.figure(3)
         plt.clf()
-        plt.plot((target_voltages)[:, 2], color = "green")
-        plt.plot((voltages)[:, 2], color = "blue")
+        plt.plot((target_voltages)[:, index], color = "green")
+        plt.plot((voltages)[:, index], color = "blue")
         plt.figure(4)
         plt.clf()
-        plt.plot((real_target)[:, 2], color = "black")
-        plt.plot((voltages)[:, 2], color="red")
-        # plt.plot((rise_values)[:, 2], color="red")
+        plt.plot((real_target)[:, index], color = "black")
+        plt.plot((voltages)[:, index], color="red")
+        # plt.plot((rise_values)[:, index], color="red")
         plt.figure(5)
         plt.clf()
         plt.plot(draw3np, color="blue")
@@ -327,6 +341,11 @@ def main2():
         plt.clf()
         plt.plot((real_target - voltages)[:, 2], color = "brown")
         plt.plot((real_target - voltages)[:, 1], color = "black")
+        plt.figure(7)
+        plt.clf()
+        plt.plot(int_grads[:, 0], color = "green")
+        # plt.plot(int_grad[:, 1], color = "orange")
+
 
         # plt.plot((real_target)[:, 2], color = "black")
         # plt.plot((real_target - voltages)[:, 2], color="red")

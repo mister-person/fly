@@ -7,3 +7,4 @@ joblib
 fastparquet
 pyarrow
 h5py
+jaxley

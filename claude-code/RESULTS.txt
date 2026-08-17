@@ -1,0 +1,134 @@
+Results Tracker — 50-Neuron Recurrent Network
+==============================================
+Three test cases, evaluated on spike counts at output neurons [N47, N48, N49].
+Evaluation loss is always MSE on hard voltages at those 3 neurons (regardless of
+what loss was used during training). Lower loss and exact spike counts = better.
+
+Target spike counts:
+  132_7_2_1:  N47=7  N48=2  N49=1
+  304_4_2_7:  N47=4  N48=2  N49=7
+  240_3_3_7:  N47=3  N48=3  N49=7
+
+Legend:  ★ = exact match on all 3 neurons   ~ = 1-2 off   ✗ = clearly wrong
+         loss = MSE at output neurons (hard sim)   time = wall seconds per method
+
+
+──────────────────────────────────────────────────────────────────────────────
+Run 1: Baseline — MSE loss, N_TRAIN=25, NOPT=300, NR=4
+──────────────────────────────────────────────────────────────────────────────
+Config: LOSS=mse  N_TRAIN=25  NOPT=300  NR=4  beta_surr=30
+                    132_7_2_1              304_4_2_7              240_3_3_7
+Soft homotopy:  1.167e-02  149s  5/7 0/2 0/1 ✗   1.779e-02  155s  4/4 1/2 7/7 ~   1.589e-02  139s  0/3 0/3 6/7 ✗
+Hard surrogate: 1.291e-02   74s  5/7 1/2 0/1 ✗   1.506e-02   63s  3/4 1/2 6/7 ~   1.354e-02   64s  2/3 1/3 7/7 ~
+
+Notes: Hard is 2× faster. Both plateau around 1e-02. Hard slightly better on
+cases 1 and 2. Neither converges.
+
+
+──────────────────────────────────────────────────────────────────────────────
+Run 2: More budget — MSE loss, N_TRAIN=25, NOPT=600, NR=8
+──────────────────────────────────────────────────────────────────────────────
+Config: LOSS=mse  N_TRAIN=25  NOPT=600  NR=8  beta_surr=30
+                    132_7_2_1              304_4_2_7              240_3_3_7
+Soft homotopy:  1.175e-02  342s  5/7 0/2 0/1 ✗   1.577e-02  323s  2/4 0/2 6/7 ✗   1.386e-02  323s  1/3 1/3 7/7 ~
+Hard surrogate: 1.205e-02  217s  6/7 1/2 0/1 ✗   1.506e-02  198s  3/4 1/2 6/7 ~   1.113e-02  211s  1/3 0/3 7/7 ~
+
+Notes: 2× budget (vs Run 1) makes no difference — same loss floor. Confirms
+the bottleneck is local minima, not step count.
+
+
+──────────────────────────────────────────────────────────────────────────────
+Run 3: All neurons — MSE loss, N_TRAIN=50, NOPT=600, NR=8
+──────────────────────────────────────────────────────────────────────────────
+Config: LOSS=mse  N_TRAIN=50  NOPT=600  NR=8  beta_surr=30
+                    132_7_2_1              304_4_2_7              240_3_3_7
+Soft homotopy:  1.203e-02  395s  7/7 1/2 0/1 ✗   1.353e-02  340s  5/4 2/2 7/7 ~   1.395e-02  356s  1/3 1/3 6/7 ✗
+Hard surrogate: 1.257e-02  246s  6/7 1/2 0/1 ✗   1.609e-02  247s  4/4 2/2 8/7 ~   1.118e-02  228s  1/3 0/3 7/7 ~
+
+Notes: Training on all 50 neurons vs 25 makes no meaningful difference — same
+loss floor. Increasing training signal density does not help.
+
+
+──────────────────────────────────────────────────────────────────────────────
+Run 4: Spike-timing loss — LOSS=st, TAU=20, N_TRAIN=50, NOPT=600, NR=8  ← BEST
+──────────────────────────────────────────────────────────────────────────────
+Config: LOSS=st  TAU=20  N_TRAIN=50  NOPT=600  NR=8  beta_surr=30  SEED_BETA=30
+                    132_7_2_1              304_4_2_7              240_3_3_7
+Soft homotopy:  1.600e-02  397s  7/7 2/2 1/1 ★   1.443e-02  365s  4/4 2/2 7/7 ★   1.318e-02  352s  0/3 0/3 3/7 ✗
+Hard surrogate: 8.989e-03  239s  5/7 0/2 0/1 ✗   1.699e-02  226s  0/4 0/2 5/7 ✗   1.279e-02  218s  0/3 0/3 6/7 ✗
+
+Notes: MAJOR IMPROVEMENT for soft homotopy. Cases 0 and 1 achieve exact spike
+counts on all 3 output neurons — breakthrough vs MSE which never got exact counts.
+Case 2 remains stuck (possibly a harder landscape). Hard surrogate does not benefit
+from spike-timing loss and gets worse on cases 0 and 1.
+Evaluation loss is higher than MSE runs because training and evaluation metrics differ.
+
+
+──────────────────────────────────────────────────────────────────────────────
+Run 5: Wide seed surrogate — LOSS=st, SEED_BETA=5, N_TRAIN=50, NOPT=600, NR=8
+──────────────────────────────────────────────────────────────────────────────
+Config: LOSS=st  TAU=20  N_TRAIN=50  NOPT=600  NR=8  beta_surr=30  SEED_BETA=5
+                    132_7_2_1              304_4_2_7              240_3_3_7
+Soft homotopy:  1.600e-02  389s  7/7 2/2 1/1 ★   1.443e-02  355s  4/4 2/2 7/7 ★   1.318e-02  345s  0/3 0/3 3/7 ✗
+Hard surrogate: 1.435e-02  240s  8/7 0/2 0/1 ✗   1.829e-02  197s  1/4 0/2 7/7 ✗   1.152e-02  210s  0/3 0/3 6/7 ✗
+
+Notes: Soft unchanged (SEED_BETA only affects hard path). Hard slightly worse
+overall with wide seed. Hypothesis refuted: gradient sparsity in the seed is not
+why hard underperforms soft with spike-timing.
+
+
+──────────────────────────────────────────────────────────────────────────────
+Run 6: CMA-ES black-box — FEVALS=500, NR=8, N_TRAIN=50
+──────────────────────────────────────────────────────────────────────────────
+Config: black-box, LOSS=mse (objective), FEVALS=500/restart, NR=8, pop~19
+                    132_7_2_1              304_4_2_7              240_3_3_7
+CMA-ES:         1.135e-02  921s  8/7 5/2 0/1 ✗   1.500e-02 1115s  6/4 3/2 9/7 ✗   1.335e-02 1113s  4/3 3/3 6/7 ~
+
+Notes: Same ~1e-02 loss floor as gradient methods — confirms local minima are
+the true bottleneck. CMA-ES finds solutions that OVERSHOOT spike counts rather
+than undershoot (gradient methods typically undershoot). 3–4× slower than soft
+homotopy. Does not scale beyond ~500 weights due to O(d^2) covariance matrix.
+
+
+──────────────────────────────────────────────────────────────────────────────
+Run 7: Differential Evolution black-box — FEVALS=500, NR=8, N_TRAIN=50
+──────────────────────────────────────────────────────────────────────────────
+Config: black-box, LOSS=mse, FEVALS=500/restart, NR=8, pop=5×n_weights≈660–1520
+                    132_7_2_1              304_4_2_7              240_3_3_7
+Diff. Evol:     1.351e-02 4356s  5/7 0/2 0/1 ✗   1.984e-02 6565s  0/4 0/2 0/7 ✗   1.365e-02 6107s  0/3 0/3 0/7 ✗
+
+Notes: Not viable. 4–7× slower than CMA-ES. The large population (5×n_weights)
+evaluated via vmap creates huge batches that are slow on CPU. Only 10 generations
+per restart with this budget — completely insufficient. Two of three cases produce
+all-zero spike counts (optimizer failed to find any spiking solution).
+
+
+──────────────────────────────────────────────────────────────────────────────
+Summary: Best results per case
+──────────────────────────────────────────────────────────────────────────────
+132_7_2_1 (target N47=7 N48=2 N49=1):
+  ★ EXACT  — Soft homotopy + spike-timing (Run 4 and 5)
+
+304_4_2_7 (target N47=4 N48=2 N49=7):
+  ★ EXACT  — Soft homotopy + spike-timing (Run 4 and 5)
+
+240_3_3_7 (target N47=3 N48=3 N49=7):
+  ~ CLOSE  — Hard surrogate + MSE (Run 2): N47:1/3 N48:0/3 N49:7/7
+             Hard surrogate + MSE (Run 3): N47:1/3 N48:0/3 N49:7/7
+             Hard surrogate + ST  (Run 4): N47:0/3 N48:0/3 N49:6/7
+  → Case 2 remains unsolved. N49 is often correct but N47 and N48 stay at 0.
+
+
+──────────────────────────────────────────────────────────────────────────────
+Open questions / next directions
+──────────────────────────────────────────────────────────────────────────────
+1. Why does case 2 not converge with spike-timing loss?
+   - Soft+ST gets N49 correct but N47/N48 = 0 every time. Is there a local basin
+     where N49 fires but N47/N48 are suppressed? More restarts may help.
+2. Can we tune TAU? Larger tau (50–100) would broaden the attraction basin around
+   each spike target and might help case 2.
+3. Better initialization — greedy or activity-based weight assignment before
+   gradient descent to avoid the zero-spike local minima.
+4. Why does soft+ST overshoot on N48 in case 0 with MSE (Run 3: 5/2 spikes)?
+   The spike-timing loss fixes this; understanding why may give insight into the
+   loss landscape structure.

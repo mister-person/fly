@@ -1,3 +1,6 @@
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 """Live voltage visualization of the 3-neuron chain during training.
 
 Applies every trick from learn_homotopy.py:
@@ -40,8 +43,6 @@ Examples:
   python visualize_training.py --true-strs 600 400 --n-restarts 3 --nopt 500
   python visualize_training.py --init-mods 0.5 0.5 --betas 0.5 1 2 5 13 34
 """
-import sys
-import types
 import argparse
 import dataclasses
 from functools import partial
@@ -52,16 +53,16 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-for _n, _attrs in [("brian2", {"ms": 1e-3}), ("neuron_model", {"NeuronSim": object})]:
-    if _n not in sys.modules:
-        _m = types.ModuleType(_n)
-        for _k, _v in _attrs.items():
-            setattr(_m, _k, _v)
-        sys.modules[_n] = _m
-
+# homotopy_core installs the brian2/neuron_model stubs and imports jax_spiking_model
+from homotopy_core import (
+    soft_sim as _soft_sim_core,
+    hard_sim as _hard_sim_core,
+    homotopy_stage as _homotopy_stage_core,
+    lr_for_beta,
+)
 import jax_spiking_model as sim
 
-# ── fixed network topology ────────────────────────────────────────────────────
+# ── fixed 3-neuron chain topology ────────────────────────────────────────────
 CONNECTIONS      = jnp.array([[0, 1], [1, 2]])
 NEURONS_ACTIVATE = jnp.array([0])
 NUM_NEURONS      = 10
@@ -69,6 +70,27 @@ NUM_NEURONS      = 10
 COLORS = ["tab:blue", "tab:orange", "tab:green"]
 
 
+# ── thin wrappers binding the fixed topology ──────────────────────────────────
+# These keep the same API that test_cases.py imports.
+
+def soft_sim(w, beta, params):
+    return _soft_sim_core(w, beta, params, CONNECTIONS, NUM_NEURONS, NEURONS_ACTIVATE)
+
+
+def hard_sim(w, params):
+    return _hard_sim_core(w, params, CONNECTIONS, NUM_NEURONS, NEURONS_ACTIVATE)
+
+
+@partial(jax.jit, static_argnames=["params", "nopt", "observe_last"])
+def homotopy_stage(w0, base, lo, hi, beta, lr, params, nopt=300, observe_last=False):
+    return _homotopy_stage_core(
+        w0, base, lo, hi, beta, lr,
+        params, CONNECTIONS, NUM_NEURONS, NEURONS_ACTIVATE,
+        nopt=nopt, observe_last=observe_last,
+    )
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
 def parse_args():
     p = argparse.ArgumentParser(description="3-neuron homotopy training visualizer",
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -108,81 +130,6 @@ def parse_args():
     return p.parse_args()
 
 
-# ── soft forward pass (trick 1) ───────────────────────────────────────────────
-def soft_sim(w, beta, params):
-    """Fully-differentiable forward: sigmoid replaces every hard step."""
-    nd   = params.neuron_decay
-    rd   = params.rise_decay
-    th   = params.threshold
-    delay = params.delay_iters
-    sw   = w * params.global_synapse_weight
-
-    V    = jnp.zeros((params.steps, NUM_NEURONS))
-    ref  = jnp.zeros(NUM_NEURONS)
-    rise = jnp.zeros((params.steps, NUM_NEURONS))
-
-    def loop(i, x):
-        V, ref, rise = x
-        inj = ((i % 100) == 0) * th / nd
-        wi  = V.at[i, NEURONS_ACTIVATE].set(inj)
-        nc  = wi[i]
-        pre_v = jnp.where(i - delay >= 0,
-                          wi[i - delay], jnp.zeros_like(nc))
-        # soft synaptic activation (trick 1a)
-        act  = jax.nn.sigmoid(beta * (pre_v[CONNECTIONS[..., 0]] / th - 1.0))
-        upd  = jnp.zeros_like(nc).at[CONNECTIONS[..., 1]].add(act * sw)
-        r    = (rise[i] + upd) * rd * (ref != 1)
-        out  = (nc - r) * nd + r
-        out  = out * (ref == 0)
-        # soft refractory trigger (trick 1b)
-        fire    = jax.nn.sigmoid(beta * (out / th - 1.0))
-        new_ref = (ref + fire * (params.refractory_iters + 1 - ref) - 1).clip(min=0)
-        return (V.at[i + 1].set(out), new_ref, rise.at[i + 1].set(r))
-
-    V, _, _ = jax.lax.fori_loop(0, params.steps, loop, (V, ref, rise))
-    return V
-
-
-def hard_sim(w, params):
-    """True hard forward, for measuring real loss and displaying voltages."""
-    return sim.run_sim(params, CONNECTIONS, NUM_NEURONS, w, NEURONS_ACTIVATE)[0]
-
-
-# ── one beta stage: Adam + best-iterate (tricks 3 & 4) ───────────────────────
-@partial(jax.jit, static_argnames=["params", "nopt", "observe_last"])
-def homotopy_stage(w0, base, lo, hi, beta, lr, params, nopt=300, observe_last=False):
-    """Adam on soft_loss(w, soft_target(base, beta)) with best-iterate tracking.
-
-    observe_last=True restricts the loss to neuron 2's trace only — the gradient
-    still flows back through the full chain but the objective is partial-observation.
-    """
-    target = soft_sim(base, beta, params)   # trick 2: soft target at same beta
-
-    def soft_loss(w):
-        v = soft_sim(w, beta, params)
-        if observe_last:
-            return jnp.sum((target[:, 2] - v[:, 2]) ** 2)
-        return jnp.sum((target - v) ** 2)
-
-    vg = jax.value_and_grad(soft_loss)
-
-    def body(t, c):
-        w, m, v, bw, bl = c
-        l, g = vg(w)
-        g  = jnp.nan_to_num(g)
-        bw, bl = jax.lax.cond(l < bl, lambda: (w, l), lambda: (bw, bl))
-        m  = 0.9   * m + 0.1   * g
-        v  = 0.999 * v + 0.001 * g * g
-        t1 = (t + 1).astype(jnp.float32)
-        step = (m / (1 - 0.9 ** t1)) / (jnp.sqrt(v / (1 - 0.999 ** t1)) + 1e-12)
-        return (jnp.clip(w - lr * step, lo, hi), m, v, bw, bl)
-
-    l0 = vg(w0)[0]
-    z  = jnp.zeros_like(w0)
-    _, _, _, bw, _ = jax.lax.fori_loop(0, nopt, body, (w0, z, z, w0, l0))
-    return bw
-
-
 def main():
     args = parse_args()
 
@@ -214,10 +161,9 @@ def main():
     betas        = args.betas
     n_restarts   = args.n_restarts
     nopt         = args.nopt
-    lr_scale     = args.lr_scale
-    tol          = args.tol
-    observe_last = args.observe_last
-
+    lr_scale      = args.lr_scale
+    tol           = args.tol
+    observe_last  = args.observe_last
     params = dataclasses.replace(sim.default_params, steps=args.runtime * 10)
     th     = params.threshold
 
@@ -326,7 +272,7 @@ def main():
             if not plt.fignum_exists(fig.number):
                 break
 
-            lr = (1.0 if beta <= 2 else (0.5 if beta <= 8 else 0.2)) * lr_scale
+            lr = lr_for_beta(beta, lr_scale)
             w  = homotopy_stage(w, true_strs, lo, hi, jnp.float32(beta), jnp.float32(lr),
                                 params, nopt=nopt, observe_last=observe_last)
 

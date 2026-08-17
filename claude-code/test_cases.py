@@ -18,8 +18,10 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 BETAS         = [0.5, 1, 2, 3, 5, 8, 13, 21, 34]
-NOPT          = int(os.environ.get("NOPT", "300"))
-N_RESTARTS    = int(os.environ.get("NR",   "4"))
+NOPT          = int(os.environ.get("NOPT",    "300"))
+N_RESTARTS    = int(os.environ.get("NR",      "4"))
+PATIENCE      = int(os.environ.get("PATIENCE","50"))   # early-stop window (steps)
+RTOL          = float(os.environ.get("RTOL",  "1e-3")) # min relative improvement
 TOL           = 1e-6
 RUNTIME_STEPS = 1000   # params.steps
 OBSERVE_LAST  = os.environ.get("OBSERVE_LAST", "0") == "1"
@@ -164,6 +166,87 @@ TEST_CASES = [
 ]
 
 
+# ── 50-neuron random recurrent test cases ─────────────────────────────────────
+#
+# Topology is a random sparse directed graph (no self-loops) with connection
+# probability p_connect.  True weights are drawn from a random uniform range.
+# Both are fully determined by (topo_seed, p_connect, trial_idx).
+#
+# Observed neurons: OUTPUT_NEURONS_50 (indices 47, 48, 49).
+# Input neuron:     0  (activated every 100 steps, same as 3-neuron chain).
+#
+# Run just these:  python3 test_cases.py recurrent
+# Run chain only:  python3 test_cases.py  (default) OR  python3 test_cases.py chain
+# Run everything:  python3 test_cases.py all
+
+OUTPUT_NEURONS_50 = [47, 48, 49]
+RUNTIME_STEPS_50  = 1000
+
+
+def _make_recurrent_topology(topo_seed, p_connect, num_neurons=50,
+                              output_neurons=None):
+    """Reconstruct random recurrent connection list from generative params."""
+    import numpy as _np
+    if output_neurons is None:
+        output_neurons = OUTPUT_NEURONS_50
+    rng = _np.random.default_rng(topo_seed)
+    pairs = [(i, j) for i in range(num_neurons)
+                    for j in range(num_neurons) if i != j]
+    mask  = rng.random(len(pairs)) < p_connect
+    conns = [p for p, m in zip(pairs, mask) if m]
+    # guarantee each output has at least 2 incoming connections
+    for out in output_neurons:
+        inc = [p for p in conns if p[1] == out]
+        while len(inc) < 2:
+            pre = int(rng.integers(0, num_neurons))
+            if pre != out and (pre, out) not in conns:
+                conns.append((pre, out))
+                inc.append((pre, out))
+    return conns
+
+
+def _make_recurrent_weights(topo_seed, p_connect, trial_idx, num_neurons=50,
+                             output_neurons=None):
+    """Reconstruct topology and true weight vector from generative params."""
+    import numpy as _np
+    conns = _make_recurrent_topology(topo_seed, p_connect, num_neurons,
+                                     output_neurons)
+    n_syn = len(conns)
+    rng   = _np.random.default_rng(topo_seed * 100 + int(p_connect * 100))
+    for _ in range(trial_idx + 1):
+        lo = rng.uniform(50, 300)
+        hi = rng.uniform(lo * 2, lo * 6)
+        w  = rng.uniform(lo, hi, n_syn)
+    return conns, w
+
+
+RECURRENT_CASES = [
+    # Spike counts at true weights (observed during exploration):
+    dict(name="recurrent_132_7_2_1",
+         group="recurrent",
+         topo_seed=6, p_connect=0.06, trial_idx=13,
+         num_neurons=50, output_neurons=OUTPUT_NEURONS_50,
+         observed_spikes={47: 7, 48: 2, 49: 1},
+         desc="132 syn p=0.06; N47=7sp N48=2sp N49=1sp; timing spread ~800 steps"),
+
+    dict(name="recurrent_304_4_2_7",
+         group="recurrent",
+         topo_seed=0, p_connect=0.12, trial_idx=3,
+         num_neurons=50, output_neurons=OUTPUT_NEURONS_50,
+         observed_spikes={47: 4, 48: 2, 49: 7},
+         desc="304 syn p=0.12; N47=4sp N48=2sp N49=7sp"),
+
+    dict(name="recurrent_240_3_3_7",
+         group="recurrent",
+         topo_seed=0, p_connect=0.09, trial_idx=8,
+         num_neurons=50, output_neurons=OUTPUT_NEURONS_50,
+         observed_spikes={47: 3, 48: 3, 49: 7},
+         desc="240 syn p=0.09; N47=3sp N48=3sp N49=7sp"),
+]
+
+ALL_CASES = TEST_CASES + RECURRENT_CASES
+
+
 # ── worker (runs in a child process) ─────────────────────────────────────────
 
 def _worker(args):
@@ -172,7 +255,8 @@ def _worker(args):
 
     import types, dataclasses
     import numpy as np
-    import jax.numpy as jnp
+    import jax, jax.numpy as jnp
+    from functools import partial
 
     for _n, _attrs in [("brian2", {"ms": 1e-3}), ("neuron_model", {"NeuronSim": object})]:
         if _n not in sys.modules:
@@ -180,8 +264,117 @@ def _worker(args):
             for _k, _v in _attrs.items(): setattr(_m, _k, _v)
             sys.modules[_n] = _m
 
-    from visualize_training import hard_sim, homotopy_stage
+    from homotopy_core import (
+        hard_sim as _hard_sim,
+        homotopy_stage as _homotopy_stage,
+        soft_sim as _soft_sim,
+    )
     import jax_spiking_model as sim
+
+    # ── recurrent 50-neuron case ──────────────────────────────────────────────
+    if tc.get("group") == "recurrent":
+        params = dataclasses.replace(sim.default_params,
+                                     steps=tc.get("steps", RUNTIME_STEPS_50))
+        th   = params.threshold
+        conns, true_w_np = _make_recurrent_weights(
+            tc["topo_seed"], tc["p_connect"], tc["trial_idx"],
+            tc["num_neurons"], tc["output_neurons"])
+        C    = jnp.array(conns)
+        N_R  = tc["num_neurons"]
+        A    = jnp.array([0])
+        outs = tc["output_neurons"]
+
+        true_strs = jnp.array(true_w_np, dtype=jnp.float32)
+        lo = true_strs * 0.1
+        hi = true_strs * 5.0
+
+        target_v    = _hard_sim(true_strs, params, C, N_R, A)
+        target_fire = [bool(jnp.any(target_v[:, n] >= th)) for n in outs]
+
+        @jax.jit
+        def stage(w0, base, lo, hi, beta, lr):
+            tgt = _soft_sim(base, beta, params, C, N_R, A)
+            def loss_fn(w):
+                v = _soft_sim(w, beta, params, C, N_R, A)
+                return sum(jnp.sum((tgt[:, n] - v[:, n]) ** 2) for n in outs)
+            vg = jax.value_and_grad(loss_fn)
+            def cond(c):
+                _, _, _, _, _, t, _, done = c
+                return (t < NOPT) & ~done
+            def body(c):
+                w, m, v, bw, bl, t, l_check, done = c
+                l, g = vg(w)
+                g = jnp.nan_to_num(g)
+                bw, bl = jax.lax.cond(l < bl, lambda: (w, l), lambda: (bw, bl))
+                m  = 0.9   * m + 0.1   * g
+                v  = 0.999 * v + 0.001 * g * g
+                t1 = (t + 1).astype(jnp.float32)
+                step = (m / (1 - 0.9 ** t1)) / (
+                    jnp.sqrt(v / (1 - 0.999 ** t1)) + 1e-12)
+                w_new  = jnp.clip(w - lr * step, lo, hi)
+                new_t  = t + 1
+                at_end = (new_t % PATIENCE == 0)
+                rel_imp = (l_check - bl) / (jnp.abs(l_check) + 1e-10)
+                done_now    = done | (at_end & (rel_imp < RTOL))
+                l_check_new = jax.lax.cond(at_end, lambda: bl, lambda: l_check)
+                return (w_new, m, v, bw, bl, new_t, l_check_new, done_now)
+            l0 = vg(w0)[0]
+            z  = jnp.zeros_like(w0)
+            init = (w0, z, z, w0, l0, jnp.int32(0), l0, jnp.bool_(False))
+            _, _, _, bw, _, _, _, _ = jax.lax.while_loop(cond, body, init)
+            return bw
+
+        rng_r     = np.random.default_rng(seed)
+        best_loss = float("inf")
+        best_w    = true_strs
+
+        for restart in range(N_RESTARTS):
+            w = true_strs * jnp.array(
+                rng_r.uniform(0.5, 1.5, len(true_strs)), dtype=jnp.float32)
+            for beta in BETAS:
+                lr = 1.0 if beta <= 2 else (0.5 if beta <= 8 else 0.2)
+                w  = stage(w, true_strs, lo, hi,
+                           jnp.float32(beta), jnp.float32(lr))
+            v_found = np.array(_hard_sim(w, params, C, N_R, A))
+            hl = float(sum(
+                np.sum((np.array(target_v)[:, n] - v_found[:, n]) ** 2)
+                for n in outs))
+            if hl < best_loss:
+                best_loss = hl
+                best_w    = w
+            if best_loss < TOL:
+                break
+
+        v_best = np.array(_hard_sim(best_w, params, C, N_R, A))
+        sp_found = {n: int(np.sum(v_best[:, n] >= th))         for n in outs}
+        sp_true  = {n: int(np.sum(np.array(target_v)[:, n] >= th)) for n in outs}
+        mods = "  ".join(f"N{n}:{sp_found[n]}/{sp_true[n]}sp" for n in outs)
+
+        return dict(
+            name        = tc["name"],
+            true_strs   = [],
+            init_mods   = None,
+            converged   = best_loss < TOL,
+            loss        = best_loss,
+            mods        = mods,
+            target_fire = target_fire,
+        )
+
+    # ── 3-neuron chain case ───────────────────────────────────────────────────
+    CONNECTIONS      = jnp.array([[0, 1], [1, 2]])
+    NEURONS_ACTIVATE = jnp.array([0])
+    NUM_NEURONS      = 10
+
+    def hard_sim(w, params):
+        return _hard_sim(w, params, CONNECTIONS, NUM_NEURONS, NEURONS_ACTIVATE)
+
+    @partial(jax.jit, static_argnames=["params", "nopt", "observe_last", "patience"])
+    def homotopy_stage(w0, base, lo, hi, beta, lr, params,
+                       nopt=300, observe_last=False, patience=30):
+        return _homotopy_stage(w0, base, lo, hi, beta, lr,
+                               params, CONNECTIONS, NUM_NEURONS, NEURONS_ACTIVATE,
+                               nopt=nopt, observe_last=observe_last,
+                               patience=patience)
 
     params = dataclasses.replace(sim.default_params, steps=RUNTIME_STEPS)
     rng    = np.random.default_rng(seed)
@@ -206,7 +399,8 @@ def _worker(args):
             lr = 1.0 if beta <= 2 else (0.5 if beta <= 8 else 0.2)
             w  = homotopy_stage(w, true_strs, lo, hi,
                                 jnp.float32(beta), jnp.float32(lr),
-                                params, nopt=NOPT, observe_last=OBSERVE_LAST)
+                                params, nopt=NOPT, observe_last=OBSERVE_LAST,
+                                patience=PATIENCE)
 
         hl = float(jnp.sum((target_v - hard_sim(w, params)) ** 2))
         if hl < best_loss:
@@ -231,12 +425,26 @@ def _worker(args):
 def main():
     import multiprocessing
 
-    # optional name filter: python3 test_cases.py true_140_800 true_140_600
+    # Filtering:
+    #   python3 test_cases.py              → chain cases only (default)
+    #   python3 test_cases.py chain        → chain cases only
+    #   python3 test_cases.py recurrent    → recurrent 50-neuron cases
+    #   python3 test_cases.py all          → every case
+    #   python3 test_cases.py name1 name2  → specific cases by name
     names = sys.argv[1:]
-    cases = [tc for tc in TEST_CASES if not names or tc["name"] in names]
-    if names and not cases:
+    _grp  = lambda tc: tc.get("group", "chain")
+    if not names or names == ["chain"]:
+        cases = [tc for tc in ALL_CASES if _grp(tc) == "chain"]
+    elif names == ["recurrent"]:
+        cases = [tc for tc in ALL_CASES if _grp(tc) == "recurrent"]
+    elif names == ["all"]:
+        cases = ALL_CASES
+    else:
+        cases = [tc for tc in ALL_CASES if tc["name"] in names]
+    if not cases:
         print(f"No test cases matched: {names}")
-        print(f"Available: {[tc['name'] for tc in TEST_CASES]}")
+        print(f"Groups: chain, recurrent, all")
+        print(f"Names:  {[tc['name'] for tc in ALL_CASES]}")
         return
 
     n_workers = min(len(cases), os.cpu_count() or 4)
@@ -249,21 +457,27 @@ def main():
     results = {}
     t0 = time.time()
 
+    tc_by_name = {tc["name"]: tc for tc in cases}
+
     with ProcessPoolExecutor(max_workers=n_workers) as pool:
         futs = {pool.submit(_worker, w): w[0]["name"] for w in work}
         for fut in as_completed(futs):
             name = futs[fut]
             try:
-                r = results[name] = fut.result()
+                r  = results[name] = fut.result()
                 ok = "YES" if r["converged"] else "NO "
-                n1 = "Y" if r["target_fire"][1] else "N"
-                n2 = "Y" if r["target_fire"][2] else "N"
-                print(f"  [{ok}] {name:<34}  N1={n1} N2={n2}  "
-                      f"loss={r['loss']:.3e}  mods={r['mods']}")
+                if tc_by_name[name].get("group") == "recurrent":
+                    print(f"  [{ok}] {name:<34}  {r['mods']}  "
+                          f"loss={r['loss']:.3e}", flush=True)
+                else:
+                    n1 = "Y" if r["target_fire"][1] else "N"
+                    n2 = "Y" if r["target_fire"][2] else "N"
+                    print(f"  [{ok}] {name:<34}  N1={n1} N2={n2}  "
+                          f"loss={r['loss']:.3e}  mods={r['mods']}", flush=True)
             except Exception as exc:
                 results[name] = dict(name=name, converged=False, loss=float("inf"),
                                      target_fire=[False]*3, mods="ERR")
-                print(f"  [ERR] {name:<34}  {exc}")
+                print(f"  [ERR] {name:<34}  {exc}", flush=True)
 
     elapsed = time.time() - t0
 
@@ -280,12 +494,18 @@ def main():
         ok = "YES" if r["converged"] else "NO"
         if r["converged"]:
             n_pass += 1
-        n1 = "Y" if r["target_fire"][1] else "N"
-        n2 = "Y" if r["target_fire"][2] else "N"
-        ts = str(tc["true_strs"])
-        im = str(tc.get("init_mods", "rand"))
-        print(f"{tc['name']:{W}} {ts:>12} {im:>14}  "
-              f"{n1:>2} {n2:>2}  {ok:>5}  {r['loss']:>11.3e}  {r['mods']}")
+        if tc.get("group") == "recurrent":
+            outs = tc["output_neurons"]
+            fire = " ".join(f"N{n}={'Y' if f else 'N'}"
+                            for n, f in zip(outs, r["target_fire"]))
+            print(f"{tc['name']:{W}} {fire}  {ok:>5}  {r['loss']:>11.3e}  {r['mods']}")
+        else:
+            n1 = "Y" if r["target_fire"][1] else "N"
+            n2 = "Y" if r["target_fire"][2] else "N"
+            ts = str(tc["true_strs"])
+            im = str(tc.get("init_mods", "rand"))
+            print(f"{tc['name']:{W}} {ts:>12} {im:>14}  "
+                  f"{n1:>2} {n2:>2}  {ok:>5}  {r['loss']:>11.3e}  {r['mods']}")
 
     print(f"\n{n_pass}/{len(cases)} converged  ({elapsed:.1f}s wall-clock)")
 

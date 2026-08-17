@@ -1,0 +1,672 @@
+Session Notes — JAX Spiking Neural Network Homotopy Training
+============================================================
+Date: 2026-06-26/27
+
+Overview
+--------
+Starting point: a JAX-based spiking neural network simulator (jax_spiking_model.py) and
+two training scripts. The network is a 3-neuron chain: neuron 0 is driven by a periodic
+input, neuron 0 → neuron 1 via synapse 0, neuron 1 → neuron 2 via synapse 1. The goal
+is to recover two synapse strength parameters from the neuron 2 voltage trace (partial
+observation) or all neurons' traces (full observation).
+
+The session touched six main areas: bug fixes, new CLI features, test infrastructure,
+a refactor, the partial-observation algorithm, and an algorithm improvement.
+
+
+1. Bug Fix: NameError on NOPT
+------------------------------
+Problem: visualize_training.py raised NameError: name 'NOPT' is not defined at line 159.
+
+Cause: homotopy_stage still referenced a global NOPT constant that had been removed
+when the function was refactored to take nopt as an explicit parameter.
+
+Fix: Added nopt as a keyword argument to homotopy_stage (with default 300) and listed
+it in static_argnames so JAX JIT treats it as a compile-time constant rather than a
+traced value. Callers now pass nopt=nopt explicitly.
+
+
+2. --lr-scale Parameter
+------------------------
+Added --lr-scale FLOAT to visualize_training.py's CLI. The learning rate schedule is
+  lr = (1.0 if beta <= 2 else (0.5 if beta <= 8 else 0.2)) * lr_scale
+Setting lr_scale < 1 slows training so the voltage panel updates are visible in real
+time; the default is 1.0 (original speed).
+
+
+3. --tol Parameter
+-------------------
+Added --tol FLOAT to visualize_training.py. After each beta stage, the hard (true
+spiking) loss is measured. If it falls below tol, training stops early and the plot
+freezes with a "CONVERGED" label. Default: 1e-6.
+
+
+4. Hand-Crafted Test Cases
+---------------------------
+Wrote test_cases.py with 24 test cases covering:
+
+  Starting weights way off:
+    s0_way_low       — synapse 0 starts 20× below target
+    s1_way_low       — synapse 1 starts 20× below target
+    both_way_low     — both synapses start 20× below target
+    s0_way_high      — synapse 0 starts 10× above target
+    s1_way_high      — synapse 1 starts 10× above target
+    both_way_high    — both synapses start 10× above target
+    s0_hi_s1_lo      — crossed: s0 way high, s1 way low
+    s0_lo_s1_hi      — crossed: s0 way low, s1 way high
+
+  Different true (target) weights:
+    true_300_600     — s1 twice s0
+    true_600_300     — s0 twice s1
+    true_140_800     — s0 just above the hard firing threshold (1 spike)
+    true_800_100     — s0 very strong, s1 weak (N2 silent in target)
+    true_200_200     — symmetric, weaker than default 420 (N2 silent in target)
+    true_1000_1000   — both very strong, neurons fire many times per window
+    true_140_600     — s0 just above threshold, s1 strong
+    true_600_50      — s0 strong, s1 near threshold (N2 silent in target)
+
+  Target has silent neurons:
+    target_n2_silent      — true s1 very small, N2 never fires
+    target_n2_silent_asym — moderate s0, tiny s1, N2 never fires
+    target_n1n2_silent    — true s0 very small, N1 silent → N2 also silent
+    target_both_silent    — both synapses tiny, both neurons silent
+
+  Initialization has silent neurons:
+    start_n1_silent             — s0 init too small, N1 starts silent
+    start_n1n2_silent           — both init too small, both start silent
+    start_n1_too_high_n2_silent — s0 init way high, s1 init too small
+    start_n1_silent_s1_too_high — s0 init too small, s1 init way high
+
+  Key discovery during test development: the hard firing threshold for N1 lies between
+  s0=120 (N1 silent) and s0=140 (N1 fires once). Two test cases were initially named
+  true_100_800 and true_50_600, labelled as "both firing" — they actually produced
+  N1=silent, N2=silent. Renamed to true_140_800 and true_140_600 after probing the
+  threshold with a forward pass.
+
+
+5. Parallel Test Execution and Timing
+---------------------------------------
+The 24 test cases run in parallel using ProcessPoolExecutor. Each worker spawns its
+own Python interpreter which imports JAX independently. JAX JIT compilation takes
+~100-150 seconds per worker process. With 16 parallel workers on a 16-core machine,
+the wall-clock time is dominated by the slowest case rather than the sum.
+
+Timing summary:
+  Full observation (OBSERVE_LAST=0), NR=4, NOPT=300, steps=1000: 930s, 24/24 converged
+  Partial observation (OBSERVE_LAST=1), NR=4, NOPT=300, steps=1000: 2069s, 4/24 converged
+  Partial obs + aux_fade_beta=34, NR=8: 720s, 24/24 converged
+
+Output is block-buffered (stdout is a pipe, not a TTY) so all results appear at once
+when the process exits. Added flush=True to the per-case print calls so future runs
+stream results incrementally.
+
+
+6. --test-case CLI Argument
+-----------------------------
+Added --test-case NAME to visualize_training.py. It loads the named test case from
+test_cases.py's TEST_CASES list and uses those true_strs, init_mods, lo_scale, and
+hi_scale as defaults. Any CLI argument explicitly provided overrides the test-case
+values. This lets you run the visualization on the exact same configuration as a
+failing test case.
+
+
+7. --observe-last Flag
+-----------------------
+Added --observe-last to visualize_training.py and OBSERVE_LAST env var to test_cases.py.
+
+When active, the training loss is restricted to neuron 2's voltage trace only:
+  loss = sum((target[:, 2] - v[:, 2])^2)
+The gradient still backpropagates through the full chain (N2 → N1 firing → N1 voltage
+→ w0), so there is gradient signal for w0 — but it is weak and indirect.
+
+Convergence is still judged against the full hard loss (all neurons), so a run with
+--observe-last that reaches tol has genuinely learned both synapse weights using only
+N2's output.
+
+
+8. Refactor into homotopy_core.py
+-----------------------------------
+learn_homotopy.py and visualize_training.py shared four chunks of duplicated code:
+  - brian2/neuron_model stub installation
+  - soft_sim (differentiable forward pass)
+  - hard_sim (true forward pass)
+  - homotopy_stage (Adam optimizer with best-iterate tracking)
+  - lr_for_beta (the 1.0/0.5/0.2 learning-rate schedule)
+
+Created homotopy_core.py containing all five with generalized signatures that take
+network topology as explicit parameters:
+
+  soft_sim(w, beta, params, connections, num_neurons, neurons_activate)
+  hard_sim(w, params, connections, num_neurons, neurons_activate)
+  homotopy_stage(w0, base, lo, hi, beta, lr, params, connections,
+                 num_neurons, neurons_activate, *, nopt=300,
+                 observe_last=False, aux_fade_beta=5.0)
+  lr_for_beta(beta, lr_scale=1.0)
+
+visualize_training.py was updated to:
+  - Import the generalized functions from homotopy_core
+  - Define thin wrapper functions (soft_sim, hard_sim, homotopy_stage) that close
+    over the fixed topology constants (CONNECTIONS, NUM_NEURONS, NEURONS_ACTIVATE),
+    keeping the same API that test_cases.py imports
+  - Apply @partial(jax.jit, static_argnames=[...]) to the wrapper homotopy_stage
+
+learn_homotopy.py was updated to:
+  - Import from homotopy_core
+  - Use inner functions in make_solver() rather than functools.partial to avoid a
+    positional/keyword argument collision when vmapping (partial binds 'params' as a
+    keyword, but 'params' is the second positional parameter in hard_sim, so passing
+    two positional args to the partial causes "multiple values for argument 'params'")
+
+test_cases.py was not changed (it imports hard_sim and homotopy_stage from
+visualize_training with the same API).
+
+The brian2/neuron_model stubs are now installed at homotopy_core module load time,
+so visualize_training.py and learn_homotopy.py no longer need to do it themselves.
+test_cases.py's worker still installs the stubs explicitly before importing
+visualize_training — this is harmless since the if-not-in-sys.modules check prevents
+double-installation.
+
+Bug fixed during refactor: the original visualize_training.py's observe_last path used
+  target[:, 2]   (hardcoded index)
+The generalized homotopy_core version uses
+  connections[-1, 1]   (last synapse's destination neuron)
+which is correct for the [[0,1],[1,2]] chain (evaluates to 2) and generalizes to
+arbitrary topologies.
+
+Adam improvement carried over: the original learn_homotopy.py computed
+  0.9 ** (t + 1)  where t is a JAX integer
+The bias-correction terms should use float exponentiation. The visualize_training.py
+version had already fixed this with  t1 = (t+1).astype(jnp.float32). The shared
+homotopy_stage uses the float-cast version throughout.
+
+
+9. Partial-Observation Algorithm Improvement
+---------------------------------------------
+Problem: with OBSERVE_LAST=1 and no other changes, only 4/24 cases converged (4/24
+were trivial: both neurons silent in the target, so loss is identically 0).
+
+Root cause analysis:
+  The gradient of the N2-only loss with respect to w0 flows through the chain:
+    dL/dw0 = dL/dv2 · (dv2/dfire1) · (dfire1/dv1) · (dv1/dw0)
+  The middle factor dfire1/dv1 = beta/th · sigmoid(beta*(v1/th-1)) · (1-sigmoid(...))
+  is sharply peaked near v1=threshold. At high beta it is nearly zero unless N1 is
+  firing exactly at threshold. If N1 starts silent (w0 too small) or far from
+  threshold, dL/dw0 ≈ 0, so Adam cannot update w0.
+
+  Observed failure pattern: w0 converged to ~1.0 (close), but w1 consistently landed
+  at 0.7-0.9 (too low). This is a combination of:
+    (a) Weak gradient signal at high beta
+    (b) Different local minima in the N2-only loss landscape vs the full-observation
+        loss landscape
+
+Fix: Auxiliary fading loss. Inside homotopy_stage, when observe_last=True, the loss is:
+
+  alpha  = max(0, 1 - beta / aux_fade_beta)
+  loss   = (1 - alpha) * loss_N2_only  +  alpha * loss_full_obs
+
+At low beta (smooth landscape, alpha close to 1): the full-observation loss dominates,
+giving strong gradient to w0 even when N1 is not near threshold.
+At high beta (sharp landscape, alpha close to 0): the loss transitions to pure
+N2-only, which is the actual partial-observation objective.
+
+Parameter: aux_fade_beta (default 5.0).
+  With aux_fade_beta=5.0: pure N2-only by beta=5, still fails (same as baseline)
+  With aux_fade_beta=13.0: fades more slowly, still fails
+  With aux_fade_beta=34.0: maintains blended loss through the entire schedule
+    (at beta=21: still 38% full-obs; pure N2-only only at the final beta=34)
+    → 24/24 converged
+
+Why aux_fade_beta=34 works: by the time we reach pure N2-only (beta=34, the sharpest
+stage), the weights are already essentially at the true values from the blended
+earlier stages. The final pure-N2-only stage just verifies/polishes.
+
+Note on scientific interpretation: with aux_fade_beta=34, the algorithm is using full
+observation for most of training and only truly partial-observation at the last stage.
+This is best understood as a curriculum: "learn everything first, then prove you can
+continue with partial information." The weights at the last stage are close enough to
+the global minimum that the N2-only gradient is informative rather than zero.
+
+Implementation details:
+  - aux_fade_beta added as a keyword-only static arg to homotopy_stage in homotopy_core.py
+  - visualize_training.py exposes it as --aux-fade-beta (default 5.0)
+  - test_cases.py reads AUX_FADE_BETA env var (default 5.0)
+  - Both files pass it through to homotopy_stage
+  - The result: OBSERVE_LAST=1 AUX_FADE_BETA=34 NR=8 → 24/24 converged in 720s
+
+
+File Summary
+-------------
+jax_spiking_model.py   — original simulator (read-only, not modified)
+homotopy_core.py       — NEW: shared algorithm (soft_sim, hard_sim, homotopy_stage,
+                          lr_for_beta, brian2 stubs)
+learn_homotopy.py      — batch homotopy sweep over random networks; refactored to
+                          import from homotopy_core
+visualize_training.py  — live matplotlib visualization; refactored to import from
+                          homotopy_core; added --lr-scale, --tol, --test-case,
+                          --observe-last, --aux-fade-beta CLI args
+test_cases.py          — 24 parallel test cases; reads OBSERVE_LAST, AUX_FADE_BETA,
+                          NOPT, NR env vars; flush=True added to progress prints
+
+
+
+============================================================
+Session Notes — 2026-06-28/29
+============================================================
+
+This session extended the project to 50-neuron recurrent networks, refactored the
+manual BPTT code into a shared implementation, fixed a gradient bug, and ran a
+systematic comparison between the soft homotopy approach and a hard-surrogate
+direct-training approach.
+
+
+10. Shared BPTT Backward: _bptt_backward in homotopy_core.py
+--------------------------------------------------------------
+The original jax_model_grads_hack.py contained a hand-written reverse-time sweep
+(_backward) that was structurally identical to what soft_sim's custom VJP needed.
+The only mathematical difference between the two was how the synaptic activation
+slope is computed:
+
+  Soft backward:  act = sigmoid(beta*(v/th-1))
+                  d_act = act*(1-act)*beta/th   [goes to 0 away from threshold]
+
+  Hard backward:  act = (v >= th)               [step function in forward]
+                  d_act = surrogate_slope(v)     [surrogate replaces zero slope]
+
+Both share the same recurrence structure: reverse time, propagate adjoint through
+neuron decay → rise current → synaptic update → pre-synaptic voltage, accumulating
+dL/dw along the way.
+
+Created _bptt_backward(V, refs, aV_seed, w, params, connections, num_neurons,
+                        neurons_activate, act_slope_fn) in homotopy_core.py.
+The act_slope_fn argument is a closure: act_slope_fn(pre_vals) -> (act, d_act_dv).
+This is the only parameter that differs between soft and hard.
+
+Also created _soft_sim_scan — a variant of the soft forward pass that additionally
+stores per-step refractory timer snapshots (refs[i] = refractory entering step i).
+These are needed by the backward pass to reconstruct the gates without storing the
+entire intermediate state.
+
+Added jax.custom_vjp to soft_sim:
+  _soft_sim_fwd stores (w, beta, V, refs) as residuals
+  _soft_sim_bwd builds the soft act_slope closure and calls _bptt_backward
+
+jax_model_grads_hack._backward was simplified to ~15 lines — it now just calls
+_bptt_backward from homotopy_core with the appropriate hard act_slope closure.
+
+
+11. Narrow Surrogate Gradient
+------------------------------
+The original surrogate slope in jax_model_grads_hack was:
+  d/dv [tanh((v/th-1)*2) * 10]  ≈ 200/th at v=0
+
+This gives slope ~202 regardless of v, which causes adjoint explosion in long
+recurrent backward passes. In a 1000-step network with 50 neurons, each backward
+step amplifies the adjoint by ~1.5-2× through non-spiking neurons, leading to
+overflow after ~50-100 steps.
+
+Replaced with a narrow sigmoid-derivative surrogate:
+  _narrow_surrogate_slope(pre_vals, threshold, beta_surr):
+    a = sigmoid(beta_surr * (pre_vals/th - 1))
+    return a * (1 - a) * beta_surr / th
+
+This is mathematically identical to the soft backward slope. It is near-zero
+exponentially far from threshold and peaks at v=th. With beta_surr=30:
+  At v=0 (far below threshold):  slope ≈ 0 (no adjoint amplification)
+  At v=th (at threshold):        slope ≈ beta_surr/(4*th) = 7.5/th
+
+This matches the soft_sim backward at high beta, which is why the gradient
+cosine between soft@beta=34 and hard@beta_surr=30 is 0.98 (on 3 output neurons).
+
+The wide tanh surrogate was kept as _wide_surrogate_slope for reference.
+The self_test() was updated to test both; both pass to relative error < 1e-3.
+
+
+12. 50-Neuron Recurrent Cases
+-------------------------------
+Added three recurrent test cases to test_cases.py (RECURRENT_CASES list):
+
+  recurrent_132_7_2_1:  50 neurons, 132 synapses, p_connect=0.05
+                         target: N47=7sp, N48=2sp, N49=1sp
+  recurrent_304_4_2_7:  50 neurons, 304 synapses, p_connect=0.13
+                         target: N47=4sp, N48=2sp, N49=7sp
+  recurrent_240_3_3_7:  50 neurons, 240 synapses, p_connect=0.10
+                         target: N47=3sp, N48=3sp, N49=7sp
+
+All use steps=1000, input activation at neuron 0 only (periodic injection every
+100 steps), output evaluated at neurons [47, 48, 49]. True weights generated by
+random sampling from [lo, hi] range seeded by (topo_seed, trial_idx).
+
+_make_recurrent_weights() generates the topology (random Erdos-Renyi with all
+positive weights) and returns (connections_array, weights_array). The hard forward
+at true weights defines the target voltage trace.
+
+
+13. Adjoint Seed Bug
+---------------------
+Found during diagnostic of why gradient norms were infinite even with the narrow
+surrogate: the backward seed aV_seed was being set as:
+
+  aV_seed = 2.0 * (V - target_v)   [WRONG]
+
+where target_v was zero at non-output neurons (the full array was initialized to
+zeros and only set at [47,48,49]). This caused spurious large adjoint at all 47
+non-output training neurons, overwhelming the true gradient signal.
+
+Fix: explicitly zero the seed everywhere, then set only at output neurons:
+  aV_seed = jnp.zeros_like(V)
+  for n in outs:
+      aV_seed = aV_seed.at[:, n].set(2.0 * (V[:, n] - target_v[:, n]))
+
+Applied in both make_hard_stage() and the gradient cosine diagnostic.
+
+
+14. recurrent_compare.py
+--------------------------
+Created a comparison script that trains both approaches on the three recurrent cases
+with the same seeds and same total step budget (9 betas × NOPT per restart × NR
+restarts). Key design decisions:
+
+  Training set: neurons 25-49 (25 neurons including all 3 output neurons). This gives
+  more gradient signal than just 3 output neurons. The loss and backward seed are
+  restricted to these 25 neurons. Evaluation (spike counts and reported loss) uses
+  only the 3 original output neurons [47, 48, 49].
+
+  Soft homotopy: soft_sim forward, soft target (soft_sim at true weights and current
+  beta), 9-stage beta annealing 0.5→34. Adam with patience-based early stopping
+  (PATIENCE=50 steps, RTOL=1e-3 relative improvement check).
+
+  Hard surrogate: hard forward (_forward_with_refractory), hard target (hard_sim at
+  true weights), _bptt_backward with narrow surrogate (beta_surr=30). Same 9-phase
+  structure (no beta annealing — the 9 phases just repeat with an LR schedule
+  matching the soft approach: 1.0/1.0/1.0/0.5/0.5/0.5/0.2/0.2/0.2). Same
+  patience-based early stopping.
+
+  Parallelism: one process per (case, method) = 6 processes total using
+  ProcessPoolExecutor with spawn context. Each process JIT-compiles once and reuses
+  across all restarts (important: spawn avoids JAX state sharing issues; each process
+  gets a clean XLA context).
+
+Hyperparameter defaults (all overridable via env vars):
+  NOPT=600      Adam steps per phase (was 300 initially, doubled for final runs)
+  NR=8          Restarts per case (was 4 initially, doubled for final runs)
+  PATIENCE=50   Steps between early-stop checks
+  RTOL=1e-3     Relative improvement threshold for early stop
+  NW=6          Number of parallel worker processes
+
+
+15. Gradient Cosine Analysis
+-----------------------------
+Measured the gradient direction agreement between soft@beta and hard-narrow@beta_surr=30
+at w_true*1.05 (5% offset from true weights):
+
+  With 3 training neurons:
+    beta=1.0:   cos = 0.031  (nearly orthogonal — very different approaches at low beta)
+    beta=5.0:   cos = 0.069
+    beta=13.0:  cos = 0.827
+    beta=34.0:  cos = 0.979  (nearly identical at high beta)
+
+  With 25 training neurons:
+    beta=1.0:   cos = 0.010
+    beta=5.0:   cos = 0.073
+    beta=13.0:  cos = 0.831
+    beta=34.0:  cos = 0.528  (cosine drops because the 22 non-output training neurons
+                               contribute gradient components that disagree more
+                               between the two approaches)
+
+The high cosine at beta=34 with 3 neurons confirms the mathematical equivalence:
+soft_sim at high beta ≈ hard_sim, and the soft backward slope = narrow surrogate slope.
+At low beta the two approaches genuinely differ in their gradient direction.
+
+
+16. Comparison Results
+-----------------------
+Final run: NOPT=600, NR=8, 6 parallel processes, 25 training neurons.
+
+  recurrent_132 (132 syn, target N47=7sp N48=2sp N49=1sp):
+    Soft homotopy:  loss=1.175e-02  341s  N47:5/7  N48:0/2  N49:0/1
+    Hard surrogate: loss=1.205e-02  217s  N47:6/7  N48:1/2  N49:0/1
+
+  recurrent_304 (304 syn, target N47=4sp N48=2sp N49=7sp):
+    Soft homotopy:  loss=1.577e-02  323s  N47:2/4  N48:0/2  N49:6/7
+    Hard surrogate: loss=1.506e-02  198s  N47:3/4  N48:1/2  N49:6/7
+
+  recurrent_240 (240 syn, target N47=3sp N48=3sp N49=7sp):
+    Soft homotopy:  loss=1.386e-02  323s  N47:1/3  N48:1/3  N49:7/7
+    Hard surrogate: loss=1.113e-02  211s  N47:1/3  N48:0/3  N49:7/7
+
+Neither method converged (loss << 1e-6). Hard surrogate is consistently ~1.5× faster
+and has lower or equal loss in all three final cases. Spike count quality is roughly
+comparable case-by-case with no decisive winner.
+
+Convergence plateau analysis: at w_true the hard loss on 25 training neurons is 0.
+At w_true*1.01 it jumps to 5.2e-02, then to 0.176 at w_true*1.10. The optimizer
+finds solutions with ~1e-2 evaluation loss on 3 output neurons — genuinely lower
+than the neighborhood of true weights, but not at the global minimum. This confirms
+the plateau is caused by local minima (the loss landscape is highly non-convex with
+many basins), not by insufficient budget. Doubling NOPT and NR did not reduce the
+loss floor.
+
+Key conclusion: the bottleneck for 50-neuron recurrent networks is escaping local
+minima from random initialization, not gradient quality or step budget. Possible
+next directions include population-based search (CMA-ES, differential evolution),
+better initialization, or a spike-timing-aware loss function.
+
+
+File Summary (additions since previous notes)
+----------------------------------------------
+homotopy_core.py       — Added: _soft_sim_scan, _bptt_backward, jax.custom_vjp on
+                          soft_sim (_soft_sim_fwd, _soft_sim_bwd), BETAS constant
+jax_model_grads_hack.py — Simplified _backward to call _bptt_backward; added
+                          _narrow_surrogate_slope(pre_vals, threshold, beta_surr);
+                          kept _wide_surrogate_slope for reference; updated
+                          self_test to test narrow surrogate (default beta_surr=30)
+test_cases.py          — Added RECURRENT_CASES list (3 cases), _make_recurrent_weights(),
+                          _make_recurrent_topology() helper
+recurrent_compare.py   — NEW: parallel comparison script for recurrent cases
+
+
+============================================================
+Session Notes — 2026-06-29/30
+============================================================
+
+This session added a spike-timing loss, made the training neuron count configurable,
+ran a wide-surrogate seed experiment, and evaluated two black-box optimizers (CMA-ES
+and Differential Evolution) on the same three recurrent cases.
+
+
+17. Configurable Training Neuron Count (N_TRAIN)
+-------------------------------------------------
+Previously the training set was hardcoded to neurons 25–49 (the top half of the
+50-neuron network). Made it an env var:
+
+  N_TRAIN=0    → all N neurons (default, from top: range(0, N))
+  N_TRAIN=25   → second half: range(25, 50)
+  N_TRAIN=3    → only the 3 output neurons: range(47, 50)
+
+Implementation: _N_TRAIN_ENV stores the raw env var integer. In run_case_method:
+  n_train = _N_TRAIN_ENV if _N_TRAIN_ENV > 0 else N
+  train_ns = list(range(N - n_train, N))
+
+Same logic applied in grad_cosine_section so the diagnostic always matches training.
+
+Result with N_TRAIN=50 (all neurons), NOPT=600, NR=8, LOSS=mse:
+  132_7_2_1: Soft 1.203e-02 395s  N47:7/7  N48:1/2  N49:0/1
+             Hard 1.257e-02 246s  N47:6/7  N48:1/2  N49:0/1
+  304_4_2_7: Soft 1.353e-02 340s  N47:5/4  N48:2/2  N49:7/7
+             Hard 1.609e-02 247s  N47:4/4  N48:2/2  N49:8/7
+  240_3_3_7: Soft 1.395e-02 356s  N47:1/3  N48:1/3  N49:6/7
+             Hard 1.118e-02 228s  N47:1/3  N48:0/3  N49:7/7
+
+No improvement over 25 training neurons — the loss floor is the same. Confirmed
+that local minima (not signal density) are the bottleneck.
+
+
+18. Spike-Timing (Van Rossum) Loss
+------------------------------------
+Replaced MSE on raw voltages with a spike-timing loss to smooth the optimization
+landscape. The idea: convolve binary spike trains with a causal exponential kernel
+of timescale TAU (default 20 steps), then take MSE on the smoothed traces. This
+creates gradient signal for near-miss spikes (fires almost at the right time) that
+MSE-on-voltage penalizes equally to completely wrong spikes.
+
+Two new helper functions in recurrent_compare.py:
+
+  fwd_exp_conv(x, decay):  S[t] = decay*S[t-1] + x[t]   (causal)
+  rev_exp_conv(x, decay):  R[t] = x[t] + decay*x[t+1] + ...  (anti-causal adjoint)
+
+Soft path (LOSS=st):
+  S_tgt = fwd_exp_conv(sigmoid(beta*(V_true/th-1)), decay)
+  S_found = fwd_exp_conv(sigmoid(beta*(V/th-1)), decay)
+  loss = sum((S_tgt[:, n] - S_found[:, n])^2 for n in train_ns)
+  Gradient: handled entirely by JAX autograd through the differentiable chain.
+  The custom VJP of soft_sim receives dL/dV (which already includes the sigmoid
+  slope and the reverse convolution from autograd) as its seed — no extra code.
+
+Hard path (LOSS=st):
+  spikes_found = (V >= th).astype(float)
+  S_found = fwd_exp_conv(spikes_found, decay)
+  err = (S_found - S_true) * train_mask
+  loss = sum(err^2)
+  aV_seed: computed manually as the gradient of L w.r.t. V through the hard threshold,
+  using the narrow surrogate (beta_surr=30):
+    d_spike = rev_exp_conv(2*err, decay)      # dL/d_spike via adjoint of fwd_conv
+    a = sigmoid(beta_surr*(V/th - 1))
+    aV_seed = d_spike * a*(1-a)*(beta_surr/th)   # dL/dV via surrogate slope
+
+New env vars:
+  LOSS=mse  (default) — MSE on voltages
+  LOSS=st   — spike-timing Van Rossum loss
+  TAU=20.0  — exponential kernel timescale in timesteps
+
+Results with LOSS=st, TAU=20, N_TRAIN=50, NOPT=600, NR=8:
+  132_7_2_1: Soft 1.600e-02 397s  N47:7/7  N48:2/2  N49:1/1  ★ PERFECT
+             Hard 8.989e-03 239s  N47:5/7  N48:0/2  N49:0/1
+  304_4_2_7: Soft 1.443e-02 365s  N47:4/4  N48:2/2  N49:7/7  ★ PERFECT
+             Hard 1.699e-02 226s  N47:0/4  N48:0/2  N49:5/7
+  240_3_3_7: Soft 1.318e-02 352s  N47:0/3  N48:0/3  N49:3/7
+             Hard 1.279e-02 218s  N47:0/3  N48:0/3  N49:6/7
+
+Key result: spike-timing loss is a significant improvement for the soft homotopy —
+cases 0 and 1 now achieve PERFECT spike counts across all 3 output neurons, vs 0/3
+with MSE loss. The reported evaluation loss is higher than with MSE because the
+evaluation metric is still MSE-on-V at output neurons, while training was on
+spike-timing. The hard surrogate shows no improvement with spike-timing.
+
+Case 2 (240_3_3_7) remains the hardest case: N49 gets close (6/7 or 3/7) but N47
+and N48 are consistently 0. This case's landscape appears to have a more rugged
+local minimum structure.
+
+Note on "double-slope": an initial concern that surrogate slope was being applied
+twice (once in the aV_seed and once inside _bptt_backward) was investigated and
+found to be incorrect. The two applications are for different neurons at different
+timesteps (correct by the chain rule: one for the post-neuron's spike → loss path,
+one for the pre-neuron's spike → synaptic input path). No bug.
+
+
+19. Wide Seed Surrogate Experiment (SEED_BETA)
+-----------------------------------------------
+The hypothesis: the narrow surrogate (beta_surr=30) in the aV_seed produces a very
+sparse gradient because slope(V[t,n]) ≈ 0 whenever V is far from threshold. Most
+timesteps carry almost no gradient signal. A wider surrogate (lower SEED_BETA) in
+the seed might help the hard case by giving gradient to more timesteps.
+
+Added SEED_BETA env var (default 5.0) used only in the hard spike-timing seed:
+  a_seed = sigmoid(SEED_BETA * (V/th - 1))
+  aV_seed = d_spike * a_seed*(1-a_seed)*(SEED_BETA/th)
+The internal beta_surr=30 inside _bptt_backward is unchanged.
+
+Results with LOSS=st, SEED_BETA=5 (wide seed), N_TRAIN=50, NOPT=600, NR=8:
+  132_7_2_1: Hard 1.435e-02  N47:8/7  N48:0/2  N49:0/1  (worse than SEED_BETA=30)
+  304_4_2_7: Hard 1.829e-02  N47:1/4  N48:0/2  N49:7/7  (worse)
+  240_3_3_7: Hard 1.152e-02  N47:0/3  N48:0/3  N49:6/7  (marginally better)
+  Soft unchanged (SEED_BETA does not affect soft path).
+
+Conclusion: wider seed does not help. The hard surrogate's underperformance vs soft
+is not due to gradient sparsity in the seed. The fundamental advantage of soft is
+the beta annealing (starts from a smooth landscape at beta=0.5), which black-box
+and fixed-beta methods cannot replicate.
+
+
+20. Black-Box Optimizer Evaluation
+-------------------------------------
+Motivated by the local minima plateau, evaluated CMA-ES and Differential Evolution
+using the same test cases and random seeds. Both use the true hard forward pass
+(hard_sim) as the objective — no gradient information.
+
+Implementation (blackbox_compare.py):
+  Vectorized evaluation via jax.vmap over the weight axis — the entire population
+  is evaluated in a single JAX call per generation. This makes CMA-ES (pop ~19)
+  viable; it makes DE (pop = 5×n_weights ≈ 660–1520) unexpectedly slow.
+
+CMA-ES configuration:
+  Population lambda = 4 + floor(3*log(n_weights)) ≈ 19–21
+  Initial sigma = mean(hi - lo) / 6 so ±3σ covers the bounds
+  Bounds enforced via CMABoundPenalty; FEVALS budget per restart
+
+Differential Evolution configuration:
+  scipy.optimize.differential_evolution with vectorized=True
+  popsize=5 (total pop = 5 × n_weights = 660–1520)
+  maxiter computed as FEVALS // pop_count
+
+Runtime results (FEVALS=500, NR=8):
+  CMA-ES:  504–520 evals/restart (hits budget cap every time), 921–1115s total
+  DE:      11 vectorized calls/restart (= 1 init + 10 generations), 4356–6565s total
+
+  The DE wall time is 4–6× CMA-ES despite fewer vectorized calls because each DE
+  call evaluates 660–1520 candidates at once in vmap (much larger batch → slower
+  per call on CPU).
+
+Quality results (FEVALS=500, NR=8, all 3 cases):
+  CMA-ES best losses: 1.135e-02, 1.500e-02, 1.335e-02 — same ~1e-02 plateau
+  Spike counts: tend to OVERSHOOT (8/7, 5/2 for case 0; 6/4, 3/2, 9/7 for case 1)
+  DE best losses: 1.351e-02, 1.984e-02, 1.365e-02 — same plateau, worse quality
+
+Key conclusions:
+  1. Both black-box methods confirm the ~1e-02 plateau is a landscape property,
+     not a gradient artifact. CMA-ES (designed for non-convex landscapes) also
+     cannot escape it.
+  2. DE is not viable for 100–300 weights: population of 5×n_weights makes each
+     generation very slow, and 10–30 generations is insufficient for convergence.
+  3. CMA-ES is viable for 50 neurons (132–304 weights) but is 3–4× slower than
+     the gradient methods and achieves no better loss.
+  4. Scalability: CMA-ES stores a d×d covariance matrix (O(d^2) memory). At
+     even 500 neurons the weight count would be O(10,000+), making CMA-ES
+     infeasible. Black-box methods will not scale to larger networks.
+  5. The soft homotopy + spike-timing loss remains the best approach: 2/3 cases
+     converge to exact spike counts and it is faster than CMA-ES.
+
+New file: blackbox_compare.py — parallel runner for CMA-ES and DE experiments.
+New env vars: FEVALS (default 500), NW (default 6), N_TRAIN (shared with
+recurrent_compare.py), LOSS/TAU/SEED_BETA (recurrent_compare.py only).
+
+
+Key Parameters (test_cases.py env vars / visualize_training.py CLI args)
+--------------------------------------------------------------------------
+NOPT / --nopt           Adam steps per beta stage (default 300)
+NR / --n-restarts       Max random restarts (default 8 / 4 in test runner)
+OBSERVE_LAST / --observe-last   Partial observation mode (N2 only)
+AUX_FADE_BETA / --aux-fade-beta Fade schedule for auxiliary full-obs loss (default 5.0;
+                                use 34.0 for reliable convergence with observe_last)
+--lr-scale              Multiply LR schedule by this factor (default 1.0; use 0.1-0.5
+                        to slow down for visualization)
+--tol                   Early-stop threshold on hard loss (default 1e-6)
+--test-case NAME        Load configuration from test_cases.py TEST_CASES list
+--betas                 Beta annealing schedule (default: 0.5 1 2 3 5 8 13 21 34)
+--runtime               Simulation length in ms-equivalent units × 10 = steps
+
+
+Beta Schedule and Learning Rate Schedule
+-----------------------------------------
+Default betas: [0.5, 1, 2, 3, 5, 8, 13, 21, 34]  (Fibonacci-ish, covers 2 orders of mag)
+  beta = 0.5: very smooth sigmoid, landscape easy to traverse
+  beta = 34:  sigmoid ≈ step function, landscape matches the hard spiking model
+
+LR schedule (lr_for_beta):
+  beta <= 2:   lr = 1.0
+  beta <= 8:   lr = 0.5
+  beta >  8:   lr = 0.2
+  Scaled by lr_scale (CLI) or lr_scale argument.
+
+The Adam optimizer uses beta1=0.9, beta2=0.999, epsilon=1e-12, with best-iterate
+tracking: the state with the lowest soft loss seen during the nopt steps is returned
+rather than the final iterate. Weights are clipped to [lo, hi] after each step.

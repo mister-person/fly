@@ -43,23 +43,41 @@ import jax
 import jax.numpy as jnp
 
 import jax_spiking_model as model
+from homotopy_core import _bptt_backward
 
 
 # -----------------------------------------------------------------------------
-# Surrogate slope for the synaptic step function.
+# Surrogate slopes for the synaptic step function.
 #
-# Default = derivative of ``jax_spiking_model.synapse_activation_gradient_fn``
-# (i.e. d/dv of ``tanh((v/threshold - 1) * 2) * 10``), so this manual gradient
-# reproduces what the original ``@jax.custom_gradient`` attempt was meant to do.
-# Swap this out to experiment with other surrogate shapes.
+# The "wide" tanh slope (original) has a value of ~200 at v=0 (well below
+# threshold), which causes the adjoint to explode in long recurrent backward
+# passes (10 000× amplification over 50 backward steps for 1000-step networks).
+#
+# The "narrow" sigmoid-derivative slope goes to zero exponentially away from
+# threshold. ``beta_surr`` controls the width; the default (30) makes the slope
+# negligible at v=0 while still giving a strong signal within ±th/beta_surr of
+# threshold. This matches the soft_sim backward at high beta.
 # -----------------------------------------------------------------------------
-def surrogate_grad(pre_voltage, threshold):
-    """Slope substituted for d/d(pre) of the hard step ``(pre >= threshold)``."""
-    return jax.grad(model.synapse_activation_gradient_fn)(pre_voltage, threshold)
+
+def _wide_surrogate_slope(pre_vals, threshold):
+    """Original tanh-based slope; kept for backward-compatibility reference."""
+    return jax.vmap(
+        lambda v: jax.grad(model.synapse_activation_gradient_fn)(v, threshold)
+    )(pre_vals)
 
 
-# vectorised over synapses; threshold is a scalar shared by all synapses.
-_surrogate_grad_vec = jax.vmap(surrogate_grad, in_axes=(0, None))
+def _narrow_surrogate_slope(pre_vals, threshold, beta_surr):
+    """Sigmoid-derivative surrogate: peaks at threshold, near-zero elsewhere.
+
+    Avoids gradient explosion in long recurrent backward passes because
+    non-spiking neurons (v << threshold) receive effectively zero gradient.
+    """
+    a = jax.nn.sigmoid(beta_surr * (pre_vals / threshold - 1.0))
+    return a * (1.0 - a) * (beta_surr / threshold)
+
+
+# Keep the wide version accessible under its original name for self_test.
+_surrogate_grad_vec = _wide_surrogate_slope
 
 
 @partial(jax.jit, static_argnames=["params", "num_neurons"])
@@ -88,97 +106,47 @@ def _forward_with_refractory(params, connections, num_neurons, synapse_weights,
     return all_voltages, rise_values, refs
 
 
-@partial(jax.jit, static_argnames=["params", "num_neurons"])
+@partial(jax.jit, static_argnames=["params", "num_neurons", "beta_surr"])
 def _backward(params, connections, num_neurons, synapse_weights,
-              neurons_to_activate, target_voltages):
+              neurons_to_activate, target_voltages, beta_surr=30.0):
     """Hand-written reverse-time pass. Returns (grad_w, intermediate).
 
     ``grad_w[s]``        = dL / d synapse_weights[s]  (passed/un-scaled weights)
     ``intermediate[i,s]``= contribution of synapse s at step i; sums to grad_w.
+
+    ``beta_surr`` controls the surrogate slope width. Default (30) gives a narrow
+    sigmoid-derivative shape that is near-zero for non-spiking neurons, preventing
+    gradient explosion in long recurrent backward passes. Pass ``beta_surr=None``
+    to fall back to the original wide tanh-based surrogate.
     """
-    nd = params.neuron_decay
-    rise_decay = params.rise_decay
-    th = params.threshold
-    delay = params.delay_iters
-    g_scale = params.global_synapse_weight
-    steps = params.steps
-
-    pre_idx = connections[..., 0]
-    post_idx = connections[..., 1]
-    w_scaled = synapse_weights * g_scale          # weights actually used in forward
-
-    all_v, _rise, refs = _forward_with_refractory(
+    all_v, _, refs = _forward_with_refractory(
         params, connections, num_neurons, synapse_weights, neurons_to_activate)
 
-    # neurons whose "current" voltage is overwritten by the input injection each
-    # step -> their own-voltage gradient at that step is zero.
-    activate_mask = jnp.zeros(num_neurons).at[neurons_to_activate].set(1.0)
+    th = params.threshold
 
-    # adjoints, indexed by step. aV[j] = dL/d all_voltages[j], seeded by the direct
-    # (target - v)^2 loss term. aG[j] = dL/d rise_values[j] (not in this loss -> 0).
-    aV = 2.0 * (all_v - target_voltages)
-    aG = jnp.zeros((steps, num_neurons))
-    grad_w = jnp.zeros_like(synapse_weights)
-    # per-step breakdown buffer, sized from the real synapse count (not from any
-    # caller-supplied buffer, which may be mis-shaped).
-    inter_init = jnp.zeros((steps, connections.shape[0]))
+    if beta_surr is None:
+        def act_slope(pre_vals):
+            return (pre_vals >= th) * 1.0, _wide_surrogate_slope(pre_vals, th)
+    else:
+        def act_slope(pre_vals):
+            return (pre_vals >= th) * 1.0, _narrow_surrogate_slope(pre_vals, th, beta_surr)
 
-    def bwd_step(j, carry):
-        aV, aG, grad_w, inter = carry
-        i = steps - 2 - j                       # walk steps backwards
-
-        ref_in = refs[i]
-        gate_k = (ref_in == 0).astype(all_v.dtype)               # out *= (ref == 0)
-        gate_m = rise_decay * (ref_in != 1).astype(all_v.dtype)  # rise gate
-
-        avout = aV[i + 1]      # adjoint of out_i  (== all_voltages[i+1])
-        agout = aG[i + 1]      # adjoint of rise_i (== rise_values[i+1])
-
-        d_out = avout * gate_k
-        # path: out depends on neurons_current = voltages[i] (except injected neurons)
-        aV = aV.at[i].add(d_out * nd * (1.0 - activate_mask))
-
-        # out = nc*nd + Gtilde*(1-nd);  Gtilde is also rise_values[i+1]
-        d_gtilde = d_out * (1.0 - nd) + agout
-        # Gtilde = (rise_values[i] + neuron_updates) * gate_m
-        d_gp = d_gtilde * gate_m
-        aG = aG.at[i].add(d_gp)                 # rise_values[i] feeds in additively
-        d_updates = d_gp                        # so does neuron_updates
-
-        # neuron_updates[n] = sum_{s: post=n} act[s]*w_scaled[s]
-        src = i - delay
-        valid = (src >= 0).astype(all_v.dtype)
-        src_c = jnp.maximum(src, 0)
-        pre_vals = jnp.where(valid > 0, all_v[src_c][pre_idx], 0.0)
-        act = (pre_vals >= th) * 1.0
-
-        d_syn = d_updates[post_idx]             # gather adjoint by postsynaptic neuron
-        contrib = d_syn * act * g_scale         # dL/d synapse_weights[s] at this step
-        inter = inter.at[i].set(contrib)
-        grad_w = grad_w + contrib
-
-        # push back through the surrogate into the presynaptic voltage
-        d_act = d_syn * w_scaled
-        d_pre = d_act * _surrogate_grad_vec(pre_vals, th) * valid
-        aV = aV.at[src_c].add(jnp.zeros(num_neurons).at[pre_idx].add(d_pre))
-
-        return aV, aG, grad_w, inter
-
-    aV, aG, grad_w, inter = jax.lax.fori_loop(
-        0, steps - 1, bwd_step, (aV, aG, grad_w, inter_init))
-    return grad_w, inter
+    aV_seed = 2.0 * (all_v - target_voltages)
+    return _bptt_backward(all_v, refs, aV_seed, synapse_weights, params,
+                          connections, num_neurons, neurons_to_activate, act_slope)
 
 
 def synapse_weight_grads(params, connections, num_neurons, synapse_weights,
-                         neurons_to_activate, target_voltages):
+                         neurons_to_activate, target_voltages, beta_surr=30.0):
     """dL/d(synapse_weights) for ``jax_spiking_model.sim_loss`` via manual BPTT."""
     grad_w, _ = _backward(params, connections, num_neurons, synapse_weights,
-                          neurons_to_activate, target_voltages)
+                          neurons_to_activate, target_voltages, beta_surr=beta_surr)
     return grad_w
 
 
 def intermediate_grads(params, connections, num_neurons, synapse_weights,
-                       neurons_to_activate, target_voltages, zeros=None):
+                       neurons_to_activate, target_voltages, zeros=None,
+                       beta_surr=30.0):
     """Per-timestep ``(steps, num_synapses)`` breakdown of the synapse-weight
     gradient; ``intermediate_grads(...).sum(0)`` equals ``synapse_weight_grads(...)``.
 
@@ -186,20 +154,19 @@ def intermediate_grads(params, connections, num_neurons, synapse_weights,
     accepted (and ignored) only for backwards compatibility with existing call
     sites that pass a pre-allocated buffer."""
     _, inter = _backward(params, connections, num_neurons, synapse_weights,
-                         neurons_to_activate, target_voltages)
+                         neurons_to_activate, target_voltages, beta_surr=beta_surr)
     return inter
 
 
-def self_test():
+def self_test(beta_surr=30.0):
     """Check the manual gradient against ``jax.grad`` of a surrogate-differentiable
     forward (the gold standard). Run with the real ``jax_spiking_model`` importable.
+
+    The reference forward uses ``sigmoid(beta_surr*(v/th-1))`` as the synaptic
+    activation, whose exact derivative is the narrow surrogate slope. Passing
+    ``beta_surr=None`` tests the original wide tanh-based surrogate instead.
     """
     import dataclasses
-
-    @jax.custom_gradient
-    def surrogate_activation(pre, threshold):
-        out = (pre >= threshold) * 1.0
-        return out, lambda g: (_surrogate_grad_vec(pre, threshold) * g, 0.0)
 
     params = dataclasses.replace(model.default_params, steps=60, delay_iters=18,
                                  refractory_iters=5)
@@ -211,6 +178,20 @@ def self_test():
     activate = jnp.array([0, 1, 2])
 
     target, _, _ = model.run_sim(params, connections, N, weights * 0.7, activate)
+
+    if beta_surr is None:
+        # Original wide tanh surrogate: reference activation is tanh((v/th-1)*2)*10
+        @jax.custom_gradient
+        def ref_activation(pre, threshold):
+            out = (pre >= threshold) * 1.0
+            return out, lambda g: (_wide_surrogate_slope(pre, threshold) * g, 0.0)
+    else:
+        # Narrow sigmoid-derivative surrogate: reference activation is sigmoid(beta*(v/th-1))
+        @jax.custom_gradient
+        def ref_activation(pre, threshold):
+            out = (pre >= threshold) * 1.0
+            slope = _narrow_surrogate_slope(pre, threshold, beta_surr)
+            return out, lambda g: (slope * g, 0.0)
 
     def loss_surrogate(w):
         sw = w * params.global_synapse_weight
@@ -226,7 +207,7 @@ def self_test():
             pre = jnp.where(i - params.delay_iters >= 0,
                             wi[i - params.delay_iters], jnp.zeros_like(nc))
             p = pre[connections[..., 0]]
-            a = surrogate_activation(p, params.threshold)
+            a = ref_activation(p, params.threshold)
             upd = jnp.zeros_like(nc).at[connections[..., 1]].add(a * sw)
             r = (rise[i] + upd) * params.rise_decay * (ref != 1)
             out = (nc - r) * params.neuron_decay + r
@@ -239,20 +220,20 @@ def self_test():
         return jnp.sum((target - all_v) ** 2)
 
     gold = jax.grad(loss_surrogate)(weights)
-    manual = synapse_weight_grads(params, connections, N, weights, activate, target)
+    manual = synapse_weight_grads(params, connections, N, weights, activate, target,
+                                  beta_surr=beta_surr)
     inter = intermediate_grads(params, connections, N, weights, activate, target,
-                               jnp.zeros((params.steps, S)))
+                               jnp.zeros((params.steps, S)), beta_surr=beta_surr)
 
     rel = jnp.max(jnp.abs(gold - manual)) / (jnp.max(jnp.abs(gold)) + 1e-30)
     cos = jnp.dot(gold, manual) / (jnp.linalg.norm(gold) * jnp.linalg.norm(manual))
-    # tolerance scales with dtype: float32 leaves ~1e-5 rounding noise, x64 ~1e-12.
     tol = 1e-3 if gold.dtype == jnp.float32 else 1e-8
-    print(f"dtype {gold.dtype}  max rel diff vs jax.grad : {float(rel):.2e}")
-    print("cosine(gold, manual)     :", float(cos))
-    print("intermediate sums to grad:", bool(jnp.allclose(inter.sum(0), manual,
-                                                          rtol=1e-4, atol=1e-30)))
-    assert rel < tol, "manual gradient does not match autodiff surrogate"
-    assert cos > 1 - 1e-4, "manual gradient points the wrong way"
+    label = f"beta_surr={beta_surr}" if beta_surr is not None else "wide tanh"
+    print(f"[{label}]  dtype {gold.dtype}  max rel diff: {float(rel):.2e}  "
+          f"cosine: {float(cos):.6f}  inter sums: "
+          f"{bool(jnp.allclose(inter.sum(0), manual, rtol=1e-4, atol=1e-30))}")
+    assert rel < tol, f"manual gradient does not match autodiff surrogate ({label})"
+    assert cos > 1 - 1e-4, f"manual gradient points the wrong way ({label})"
     print("OK")
 
 

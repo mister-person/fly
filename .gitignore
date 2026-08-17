@@ -10,3 +10,5 @@ rust_utils/target
 venv
 FlyMimic
 tmp
+claude-code/.claude/*
+CMakeFiles/*

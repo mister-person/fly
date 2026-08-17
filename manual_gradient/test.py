@@ -1,0 +1,1 @@
+import jax_spiking_model.jax_spiking_model
